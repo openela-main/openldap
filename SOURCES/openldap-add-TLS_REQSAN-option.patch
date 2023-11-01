@@ -1,0 +1,339 @@
+From c8050d1e6eb0f4f3deb187224945ddcfc3baa4d6 Mon Sep 17 00:00:00 2001
+From: Howard Chu <hyc@openldap.org>
+Date: Fri, 21 Aug 2020 09:15:15 +0100
+Subject: [PATCH] ITS#9318 add TLS_REQSAN option
+
+Add an option to specify how subjectAlternativeNames should be
+handled when validating the names in a server certificate.
+---
+ doc/man/man3/ldap_get_option.3 |  9 +++++++
+ doc/man/man5/ldap.conf.5       | 31 +++++++++++++++++++++++
+ include/ldap.h                 |  1 +
+ libraries/libldap/init.c       |  2 ++
+ libraries/libldap/ldap-int.h   |  1 +
+ libraries/libldap/tls2.c       | 16 ++++++++++++
+ libraries/libldap/tls_g.c      | 46 ++++++++++++++++++++++++++++++++--
+ libraries/libldap/tls_o.c      | 44 ++++++++++++++++++++++++++++++--
+ 8 files changed, 146 insertions(+), 4 deletions(-)
+
+diff --git a/doc/man/man3/ldap_get_option.3 b/doc/man/man3/ldap_get_option.3
+index d229ce6e3..7d760136f 100644
+--- a/doc/man/man3/ldap_get_option.3
++++ b/doc/man/man3/ldap_get_option.3
+@@ -788,6 +788,15 @@ one of
+ .BR LDAP_OPT_X_TLS_ALLOW ,
+ .BR LDAP_OPT_X_TLS_TRY .
+ .TP
++.B LDAP_OPT_X_TLS_REQUIRE_SAN
++Sets/gets the peer certificate subjectAlternativeName checking strategy,
++one of
++.BR LDAP_OPT_X_TLS_NEVER ,
++.BR LDAP_OPT_X_TLS_HARD ,
++.BR LDAP_OPT_X_TLS_DEMAND ,
++.BR LDAP_OPT_X_TLS_ALLOW ,
++.BR LDAP_OPT_X_TLS_TRY .
++.TP
+ .B LDAP_OPT_X_TLS_SSL_CTX
+ Gets the TLS session context associated with this handle.
+ .BR outvalue
+diff --git a/doc/man/man5/ldap.conf.5 b/doc/man/man5/ldap.conf.5
+index 2f1ee886d..cde2c875f 100644
+--- a/doc/man/man5/ldap.conf.5
++++ b/doc/man/man5/ldap.conf.5
+@@ -464,6 +464,37 @@ certificate is provided, or a bad certificate is provided, the session
+ is immediately terminated. This is the default setting.
+ .RE
+ .TP
++.B TLS_REQSAN <level>
++Specifies what checks to perform on the subjectAlternativeName
++(SAN) extensions in a server certificate when validating the certificate
++name against the specified hostname of the server. The
++.B <level>
++can be specified as one of the following keywords:
++.RS
++.TP
++.B never
++The client will not check any SAN in the certificate.
++.TP
++.B allow
++The SAN is checked against the specified hostname. If a SAN is
++present but none match the specified hostname, the SANs are ignored
++and the usual check against the certificate DN is used.
++This is the default setting.
++.TP
++.B try
++The SAN is checked against the specified hostname. If no SAN is present
++in the server certificate, the usual check against the certificate DN
++is used. If a SAN is present but doesn't match the specified hostname,
++the session is immediately terminated. This setting may be preferred
++when a mix of certs with and without SANs are in use.
++.TP
++.B demand | hard
++These keywords are equivalent. The SAN is checked against the specified
++hostname. If no SAN is present in the server certificate, or no SANs
++match, the session is immediately terminated. This setting should be
++used when only certificates with SANs are in use.
++.RE
++.TP
+ .B TLS_CRLCHECK <level>
+ Specifies if the Certificate Revocation List (CRL) of the CA should be 
+ used to verify if the server certificates have not been revoked. This
+diff --git a/include/ldap.h b/include/ldap.h
+index 4b81a6841..4877de24a 100644
+--- a/include/ldap.h
++++ b/include/ldap.h
+@@ -160,6 +160,7 @@ LDAP_BEGIN_DECL
+ #define LDAP_OPT_X_TLS_PACKAGE		0x6011
+ #define LDAP_OPT_X_TLS_ECNAME		0x6012
+ #define LDAP_OPT_X_TLS_PEERCERT		0x6015	/* read-only */
++#define LDAP_OPT_X_TLS_REQUIRE_SAN	0x601a
+ 
+ #define LDAP_OPT_X_TLS_NEVER	0
+ #define LDAP_OPT_X_TLS_HARD		1
+diff --git a/libraries/libldap/init.c b/libraries/libldap/init.c
+index d503019aa..0d91808ec 100644
+--- a/libraries/libldap/init.c
++++ b/libraries/libldap/init.c
+@@ -128,6 +128,7 @@ static const struct ol_attribute {
+   	{0, ATTR_TLS,	"TLS_CACERT",		NULL,	LDAP_OPT_X_TLS_CACERTFILE},
+   	{0, ATTR_TLS,	"TLS_CACERTDIR",	NULL,	LDAP_OPT_X_TLS_CACERTDIR},
+   	{0, ATTR_TLS,	"TLS_REQCERT",		NULL,	LDAP_OPT_X_TLS_REQUIRE_CERT},
++	{0, ATTR_TLS,	"TLS_REQSAN",		NULL,	LDAP_OPT_X_TLS_REQUIRE_SAN},
+ 	{0, ATTR_TLS,	"TLS_RANDFILE",		NULL,	LDAP_OPT_X_TLS_RANDOM_FILE},
+ 	{0, ATTR_TLS,	"TLS_CIPHER_SUITE",	NULL,	LDAP_OPT_X_TLS_CIPHER_SUITE},
+ 	{0, ATTR_TLS,	"TLS_PROTOCOL_MIN",	NULL,	LDAP_OPT_X_TLS_PROTOCOL_MIN},
+@@ -624,6 +625,7 @@ void ldap_int_initialize_global_options( struct ldapoptions *gopts, int *dbglvl
+ 	gopts->ldo_tls_connect_cb = NULL;
+ 	gopts->ldo_tls_connect_arg = NULL;
+ 	gopts->ldo_tls_require_cert = LDAP_OPT_X_TLS_DEMAND;
++	gopts->ldo_tls_require_san = LDAP_OPT_X_TLS_ALLOW;
+ #endif
+ 	gopts->ldo_keepalive_probes = 0;
+ 	gopts->ldo_keepalive_interval = 0;
+diff --git a/libraries/libldap/ldap-int.h b/libraries/libldap/ldap-int.h
+index 753014ad0..2bf5d4ff6 100644
+--- a/libraries/libldap/ldap-int.h
++++ b/libraries/libldap/ldap-int.h
+@@ -262,6 +262,7 @@ struct ldapoptions {
+    	int			ldo_tls_require_cert;
+ 	int			ldo_tls_impl;
+    	int			ldo_tls_crlcheck;
++	int			ldo_tls_require_san;
+ #define LDAP_LDO_TLS_NULLARG ,0,0,0,{0,0,0,0,0,0,0,0,0},0,0,0,0
+ #else
+ #define LDAP_LDO_TLS_NULLARG
+diff --git a/libraries/libldap/tls2.c b/libraries/libldap/tls2.c
+index 6a2113255..670292c22 100644
+--- a/libraries/libldap/tls2.c
++++ b/libraries/libldap/tls2.c
+@@ -539,6 +539,7 @@ ldap_int_tls_config( LDAP *ld, int option, const char *arg )
+ 		return ldap_pvt_tls_set_option( ld, option, (void *) arg );
+ 
+ 	case LDAP_OPT_X_TLS_REQUIRE_CERT:
++	case LDAP_OPT_X_TLS_REQUIRE_SAN:
+ 	case LDAP_OPT_X_TLS:
+ 		i = -1;
+ 		if ( strcasecmp( arg, "never" ) == 0 ) {
+@@ -669,6 +670,9 @@ ldap_pvt_tls_get_option( LDAP *ld, int option, void *arg )
+ 	case LDAP_OPT_X_TLS_REQUIRE_CERT:
+ 		*(int *)arg = lo->ldo_tls_require_cert;
+ 		break;
++	case LDAP_OPT_X_TLS_REQUIRE_SAN:
++		*(int *)arg = lo->ldo_tls_require_san;
++		break;
+ #ifdef HAVE_OPENSSL_CRL
+ 	case LDAP_OPT_X_TLS_CRLCHECK:	/* OpenSSL only */
+ 		*(int *)arg = lo->ldo_tls_crlcheck;
+@@ -818,6 +822,18 @@ ldap_pvt_tls_set_option( LDAP *ld, int option, void *arg )
+ 			return 0;
+ 		}
+ 		return -1;
++	case LDAP_OPT_X_TLS_REQUIRE_SAN:
++		if ( !arg ) return -1;
++		switch( *(int *) arg ) {
++		case LDAP_OPT_X_TLS_NEVER:
++		case LDAP_OPT_X_TLS_DEMAND:
++		case LDAP_OPT_X_TLS_ALLOW:
++		case LDAP_OPT_X_TLS_TRY:
++		case LDAP_OPT_X_TLS_HARD:
++			lo->ldo_tls_require_san = * (int *) arg;
++			return 0;
++		}
++		return -1;
+ #ifdef HAVE_OPENSSL_CRL
+ 	case LDAP_OPT_X_TLS_CRLCHECK:	/* OpenSSL only */
+ 		if ( !arg ) return -1;
+diff --git a/libraries/libldap/tls_g.c b/libraries/libldap/tls_g.c
+index 15ce0bbb8..e3486c9b4 100644
+--- a/libraries/libldap/tls_g.c
++++ b/libraries/libldap/tls_g.c
+@@ -496,6 +496,7 @@ tlsg_session_chkhost( LDAP *ld, tls_session *session, const char *name_in )
+ {
+ 	tlsg_session *s = (tlsg_session *)session;
+ 	int i, ret;
++	int chkSAN = ld->ld_options.ldo_tls_require_san, gotSAN = 0;
+ 	const gnutls_datum_t *peer_cert_list;
+ 	unsigned int list_size;
+ 	char altname[NI_MAXHOST];
+@@ -558,12 +559,14 @@ tlsg_session_chkhost( LDAP *ld, tls_session *session, const char *name_in )
+ 		}
+ 	}
+ 
++	if (chkSAN) {
+ 	for ( i=0, ret=0; ret >= 0; i++ ) {
+ 		altnamesize = sizeof(altname);
+ 		ret = gnutls_x509_crt_get_subject_alt_name( cert, i, 
+ 			altname, &altnamesize, NULL );
+ 		if ( ret < 0 ) break;
+ 
++		gotSAN = 1;
+ 		/* ignore empty */
+ 		if ( altnamesize == 0 ) continue;
+ 
+@@ -599,7 +602,45 @@ tlsg_session_chkhost( LDAP *ld, tls_session *session, const char *name_in )
+ 	}
+ 	if ( ret >= 0 ) {
+ 		ret = LDAP_SUCCESS;
+-	} else {
++	}
++	}
++	if (ret != LDAP_SUCCESS && chkSAN) {
++		switch(chkSAN) {
++		case LDAP_OPT_X_TLS_DEMAND:
++		case LDAP_OPT_X_TLS_HARD:
++			if (!gotSAN) {
++				Debug( LDAP_DEBUG_ANY,
++					"TLS: unable to get subjectAltName from peer certificate.\n",
++					0, 0, 0 );
++				ret = LDAP_CONNECT_ERROR;
++				if ( ld->ld_error ) {
++					LDAP_FREE( ld->ld_error );
++				}
++				ld->ld_error = LDAP_STRDUP(
++					_("TLS: unable to get subjectAltName from peer certificate"));
++				goto done;
++			}
++			/* FALLTHRU */
++		case LDAP_OPT_X_TLS_TRY:
++			if (gotSAN) {
++				Debug( LDAP_DEBUG_ANY, "TLS: hostname (%s) does not match "
++					"subjectAltName in certificate.\n",
++					name, 0, 0 );
++				ret = LDAP_CONNECT_ERROR;
++				if ( ld->ld_error ) {
++					LDAP_FREE( ld->ld_error );
++				}
++				ld->ld_error = LDAP_STRDUP(
++					_("TLS: hostname does not match subjectAltName in peer certificate"));
++				goto done;
++			}
++			break;
++		case LDAP_OPT_X_TLS_ALLOW:
++			break;
++		}
++	}
++
++	if ( ret != LDAP_SUCCESS ){
+ 		/* find the last CN */
+ 		i=0;
+ 		do {
+@@ -654,9 +695,10 @@ tlsg_session_chkhost( LDAP *ld, tls_session *session, const char *name_in )
+ 				LDAP_FREE( ld->ld_error );
+ 			}
+ 			ld->ld_error = LDAP_STRDUP(
+-				_("TLS: hostname does not match CN in peer certificate"));
++				_("TLS: hostname does not match name in peer certificate"));
+ 		}
+ 	}
++done:
+ 	gnutls_x509_crt_deinit( cert );
+ 	return ret;
+ }
+diff --git a/libraries/libldap/tls_o.c b/libraries/libldap/tls_o.c
+index 4006f7a4f..6f27168e9 100644
+--- a/libraries/libldap/tls_o.c
++++ b/libraries/libldap/tls_o.c
+@@ -600,6 +600,7 @@ tlso_session_chkhost( LDAP *ld, tls_session *sess, const char *name_in )
+ {
+ 	tlso_session *s = (tlso_session *)sess;
+ 	int i, ret = LDAP_LOCAL_ERROR;
++	int chkSAN = ld->ld_options.ldo_tls_require_san, gotSAN = 0;
+ 	X509 *x;
+ 	const char *name;
+ 	char *ptr;
+@@ -638,7 +639,8 @@ tlso_session_chkhost( LDAP *ld, tls_session *sess, const char *name_in )
+ 	if ((ptr = strrchr(name, '.')) && isdigit((unsigned char)ptr[1])) {
+ 		if (inet_aton(name, (struct in_addr *)&addr)) ntype = IS_IP4;
+ 	}
+-	
++
++	if (chkSAN) {
+ 	i = X509_get_ext_by_NID(x, NID_subject_alt_name, -1);
+ 	if (i >= 0) {
+ 		X509_EXTENSION *ex;
+@@ -651,6 +653,7 @@ tlso_session_chkhost( LDAP *ld, tls_session *sess, const char *name_in )
+ 			char *domain = NULL;
+ 			GENERAL_NAME *gn;
+ 
++			gotSAN = 1;
+ 			if (ntype == IS_DNS) {
+ 				domain = strchr(name, '.');
+ 				if (domain) {
+@@ -709,6 +712,42 @@ tlso_session_chkhost( LDAP *ld, tls_session *sess, const char *name_in )
+ 			}
+ 		}
+ 	}
++	}
++	if (ret != LDAP_SUCCESS && chkSAN) {
++		switch(chkSAN) {
++		case LDAP_OPT_X_TLS_DEMAND:
++		case LDAP_OPT_X_TLS_HARD:
++			if (!gotSAN) {
++				Debug( LDAP_DEBUG_ANY,
++					"TLS: unable to get subjectAltName from peer certificate.\n",
++					0, 0, 0 );
++				ret = LDAP_CONNECT_ERROR;
++				if ( ld->ld_error ) {
++					LDAP_FREE( ld->ld_error );
++				}
++				ld->ld_error = LDAP_STRDUP(
++					_("TLS: unable to get subjectAltName from peer certificate"));
++				goto done;
++			}
++			/* FALLTHRU */
++		case LDAP_OPT_X_TLS_TRY:
++			if (gotSAN) {
++				Debug( LDAP_DEBUG_ANY, "TLS: hostname (%s) does not match "
++					"subjectAltName in certificate.\n",
++					name, 0, 0 );
++				ret = LDAP_CONNECT_ERROR;
++				if ( ld->ld_error ) {
++					LDAP_FREE( ld->ld_error );
++				}
++				ld->ld_error = LDAP_STRDUP(
++					_("TLS: hostname does not match subjectAltName in peer certificate"));
++				goto done;
++			}
++			break;
++		case LDAP_OPT_X_TLS_ALLOW:
++			break;
++		}
++	}
+ 
+ 	if (ret != LDAP_SUCCESS) {
+ 		X509_NAME *xn;
+@@ -772,9 +811,10 @@ no_cn:
+ 				LDAP_FREE( ld->ld_error );
+ 			}
+ 			ld->ld_error = LDAP_STRDUP(
+-				_("TLS: hostname does not match CN in peer certificate"));
++				_("TLS: hostname does not match name in peer certificate"));
+ 		}
+ 	}
++done:
+ 	X509_free(x);
+ 	return ret;
+ }
+-- 
+2.31.1
+

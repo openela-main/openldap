@@ -1,0 +1,62 @@
+From e006994d83af9dcb7813a18253cf4e5beacee043 Mon Sep 17 00:00:00 2001
+From: Ryan Tandy <ryan@nardis.ca>
+Date: Sun, 26 Apr 2020 11:40:23 -0700
+Subject: [PATCH] Fix slaptest in test077
+
+The libtool wrapper scripts lose argv[0] when exec'ing the real binary.
+
+In the CI Docker container, where the build runs as root, this was
+actually starting a real slapd on the default port.
+
+Outside Docker, running as a non-root user, this slapd would just fail
+to start, and wouldn't convert the config either.
+
+Using "slapd -Tt" fixes the issue but also prints a warning from
+slaptest since the database hasn't been initialized yet.
+
+Dynamic config isn't actually used in this test script, so let's just
+run slapd off the config file directly.
+---
+ tests/scripts/test077-sasl-gssapi | 11 ++---------
+ 1 file changed, 2 insertions(+), 9 deletions(-)
+
+diff --git a/tests/scripts/test077-sasl-gssapi b/tests/scripts/test077-sasl-gssapi
+index 19f665622..20c414600 100755
+--- a/tests/scripts/test077-sasl-gssapi
++++ b/tests/scripts/test077-sasl-gssapi
+@@ -21,22 +21,15 @@ if test $WITH_SASL = no ; then
+         exit 0
+ fi
+ 
+-SLAPTEST="$TESTWD/../servers/slapd/slaptest"
+-CONFDIR=$TESTDIR/slapd.d
+-
+ mkdir -p $TESTDIR $DBDIR1 $CONFDIR
+ cp -r $DATADIR/tls $TESTDIR
+ 
+-cd $TESTWD
+-
+-
+ echo "Starting KDC for SASL/GSSAPI tests..."
+ . $SRCDIR/scripts/setup_kdc.sh
+ 
+ echo "Running slapadd to build slapd database..."
+ . $CONFFILTER $BACKEND $MONITORDB < $SASLGSSAPICONF > $CONF1
+-$SLAPTEST -f $CONF1 -F $CONFDIR
+-$SLAPADD -F $CONFDIR -l $LDIFORDERED
++$SLAPADD -f $CONF1 -l $LDIFORDERED
+ RC=$?
+ if test $RC != 0 ; then
+ 	echo "slapadd failed ($RC)!"
+@@ -45,7 +38,7 @@ if test $RC != 0 ; then
+ fi
+ 
+ echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
+-$SLAPD -F $CONFDIR -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
+ PID=$!
+ if test $WAIT != 0 ; then
+     echo PID $PID
+-- 
+2.26.2
+

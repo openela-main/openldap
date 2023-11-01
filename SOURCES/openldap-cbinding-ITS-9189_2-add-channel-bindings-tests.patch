@@ -1,0 +1,190 @@
+From 7b0017ad49a2290ec26cbcdffded8a527799e981 Mon Sep 17 00:00:00 2001
+From: Isaac Boukris <iboukris@gmail.com>
+Date: Sat, 18 Apr 2020 16:30:03 +0200
+Subject: [PATCH] ITS#9189 add channel-bindings tests
+
+---
+ tests/data/slapd-sasl-gssapi.conf       |  3 +
+ tests/scripts/setup_kdc.sh              |  8 +++
+ tests/scripts/test068-sasl-tls-external | 22 +++++++
+ tests/scripts/test077-sasl-gssapi       | 83 ++++++++++++++++++++++++-
+ 4 files changed, 113 insertions(+), 3 deletions(-)
+
+diff --git a/tests/data/slapd-sasl-gssapi.conf b/tests/data/slapd-sasl-gssapi.conf
+index 611fc7097..29ab6040b 100644
+--- a/tests/data/slapd-sasl-gssapi.conf
++++ b/tests/data/slapd-sasl-gssapi.conf
+@@ -63,3 +63,6 @@ rootpw          secret
+ 
+ sasl-realm	@KRB5REALM@
+ sasl-host	localhost
++
++database	config
++rootpw		secret
+diff --git a/tests/scripts/setup_kdc.sh b/tests/scripts/setup_kdc.sh
+index 1cb784075..98bcd9f96 100755
+--- a/tests/scripts/setup_kdc.sh
++++ b/tests/scripts/setup_kdc.sh
+@@ -142,3 +142,11 @@ if test $RC != 0 ; then
+ 		exit 0
+ 	fi
+ fi
++
++HAVE_SASL_GSS_CBIND=no
++
++grep CHANNEL_BINDING $TESTDIR/plugin_out > /dev/null 2>&1
++RC=$?
++if test $RC = 0 ; then
++	HAVE_SASL_GSS_CBIND=yes
++fi
+diff --git a/tests/scripts/test068-sasl-tls-external b/tests/scripts/test068-sasl-tls-external
+index f647b1012..0b91aa197 100755
+--- a/tests/scripts/test068-sasl-tls-external
++++ b/tests/scripts/test068-sasl-tls-external
+@@ -88,6 +88,28 @@ else
+ 	echo "success"
+ fi
+ 
++# Exercise channel-bindings code in builds without SASL support
++for cb in "none" "tls-unique" "tls-endpoint" ; do
++
++	echo -n "Using ldapwhoami with SASL/EXTERNAL and SASL_CBINDING (${cb})...."
++
++	$LDAPSASLWHOAMI -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt     \
++	-o tls_cert=$TESTDIR/tls/certs/bjensen@mailgw.example.com.crt           \
++	-o tls_key=$TESTDIR/tls/private/bjensen@mailgw.example.com.key          \
++	-o tls_reqcert=hard -o SASL_CBINDING=$cb -ZZ -Y EXTERNAL -H $URIP1      \
++	> $TESTOUT 2>&1
++
++	RC=$?
++	if test $RC != 0 ; then
++		echo "ldapwhoami failed ($RC)!"
++		test $KILLSERVERS != no && kill -HUP $PID
++		exit $RC
++	else
++		echo "success"
++	fi
++done
++
++
+ test $KILLSERVERS != no && kill -HUP $KILLPIDS
+ 
+ if test $RC != 0 ; then
+diff --git a/tests/scripts/test077-sasl-gssapi b/tests/scripts/test077-sasl-gssapi
+index 64abe16fe..19f665622 100755
+--- a/tests/scripts/test077-sasl-gssapi
++++ b/tests/scripts/test077-sasl-gssapi
+@@ -21,7 +21,10 @@ if test $WITH_SASL = no ; then
+         exit 0
+ fi
+ 
+-mkdir -p $TESTDIR $DBDIR1
++SLAPTEST="$TESTWD/../servers/slapd/slaptest"
++CONFDIR=$TESTDIR/slapd.d
++
++mkdir -p $TESTDIR $DBDIR1 $CONFDIR
+ cp -r $DATADIR/tls $TESTDIR
+ 
+ cd $TESTWD
+@@ -32,7 +35,8 @@ echo "Starting KDC for SASL/GSSAPI tests..."
+ 
+ echo "Running slapadd to build slapd database..."
+ . $CONFFILTER $BACKEND $MONITORDB < $SASLGSSAPICONF > $CONF1
+-$SLAPADD -f $CONF1 -l $LDIFORDERED
++$SLAPTEST -f $CONF1 -F $CONFDIR
++$SLAPADD -F $CONFDIR -l $LDIFORDERED
+ RC=$?
+ if test $RC != 0 ; then
+ 	echo "slapadd failed ($RC)!"
+@@ -41,7 +45,7 @@ if test $RC != 0 ; then
+ fi
+ 
+ echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
+-$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++$SLAPD -F $CONFDIR -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
+ PID=$!
+ if test $WAIT != 0 ; then
+     echo PID $PID
+@@ -144,6 +148,79 @@ else
+ 	fi
+ fi
+ 
++if test $WITH_TLS = no ; then
++        echo "TLS support not available, skipping channe-binding test"
++elif test $HAVE_SASL_GSS_CBIND = no ; then
++        echo "SASL has no channel-binding support in GSSAPI, test skipped"
++else
++	echo "Testing SASL/GSSAPI with SASL_CBINDING..."
++
++	for acb in "none" "tls-unique" "tls-endpoint" ; do
++
++		echo "Modifying slapd's olcSaslCBinding to ${acb} ..."
++		$LDAPMODIFY -D cn=config -H $URI1 -w secret <<EOF > $TESTOUT 2>&1
++dn: cn=config
++changetype: modify
++replace: olcSaslCBinding
++olcSaslCBinding: ${acb}
++EOF
++		RC=$?
++		if test $RC != 0 ; then
++			echo "ldapmodify failed ($RC)!"
++			kill $KDCPROC
++			test $KILLSERVERS != no && kill -HUP $KILLPIDS
++			exit $RC
++		fi
++
++		for icb in "none" "tls-unique" "tls-endpoint" ; do
++
++			# The gnutls implemantation of "tls-unique" seems broken
++			if test $icb = "tls-unique" -o $acb = "tls-unique" ; then
++				if test $WITH_TLS_TYPE == gnutls  ; then
++					continue
++				fi
++			fi
++
++			fail="no"
++			if test $icb != $acb -a $acb != "none" ; then
++				# This currently fails in MIT, but it is planned to be
++				# fixed not to fail like in heimdal - avoid testing.
++				if test $icb = "none" ; then
++					continue
++				fi
++				# Otherwise unmatching bindings are expected to fail.
++				fail="yes"
++			fi
++
++			echo -n "Using ldapwhoami with SASL/GSSAPI and SASL_CBINDING "
++			echo -ne "(client: ${icb},\tserver: ${acb}): "
++
++			$LDAPSASLWHOAMI -N -Y GSSAPI -H $URI1 -ZZ -o tls_reqcert=allow	\
++			-o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt	\
++			-o SASL_CBINDING=$icb > $TESTOUT 2>&1
++
++			RC=$?
++			if test $RC != 0 ; then
++				if test $fail = "no" ; then
++					echo "test failed ($RC)!"
++					kill $KDCPROC
++					test $KILLSERVERS != no && kill -HUP $KILLPIDS
++					exit $RC
++				fi
++			elif test $fail = "yes" ; then
++				echo "failed: command succeeded unexpectedly."
++				kill $KDCPROC
++				test $KILLSERVERS != no && kill -HUP $KILLPIDS
++				exit 1
++			fi
++
++			echo "success"
++			RC=0
++		done
++	done
++fi
++
++
+ kill $KDCPROC
+ test $KILLSERVERS != no && kill -HUP $KILLPIDS
+ 
+-- 
+2.26.2
+

@@ -1,0 +1,70 @@
+From 465b1c5972eef1d4e60eb98ae3776d33e270853d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Kuzn=C3=ADk?= <okuznik@symas.com>
+Date: Fri, 15 Jun 2018 15:12:28 +0100
+Subject: [PATCH] ITS#8573 Add missing URI variables for tests
+
+---
+ tests/scripts/conf.sh    | 18 ++++++++++++++++++
+ tests/scripts/defines.sh |  7 +++++++
+ 2 files changed, 25 insertions(+)
+
+diff --git a/tests/scripts/conf.sh b/tests/scripts/conf.sh
+index fe5e60509..02629f190 100755
+--- a/tests/scripts/conf.sh
++++ b/tests/scripts/conf.sh
+@@ -75,6 +75,24 @@ sed -e "s/@BACKEND@/${BACKEND}/"			\
+ 	-e "s;@PORT4@;${PORT4};"			\
+ 	-e "s;@PORT5@;${PORT5};"			\
+ 	-e "s;@PORT6@;${PORT6};"			\
++	-e "s;@SURI1@;${SURI1};"			\
++	-e "s;@SURI2@;${SURI2};"			\
++	-e "s;@SURI3@;${SURI3};"			\
++	-e "s;@SURI4@;${SURI4};"			\
++	-e "s;@SURI5@;${SURI5};"			\
++	-e "s;@SURI6@;${SURI6};"			\
++	-e "s;@URIP1@;${URIP1};"			\
++	-e "s;@URIP2@;${URIP2};"			\
++	-e "s;@URIP3@;${URIP3};"			\
++	-e "s;@URIP4@;${URIP4};"			\
++	-e "s;@URIP5@;${URIP5};"			\
++	-e "s;@URIP6@;${URIP6};"			\
++	-e "s;@SURIP1@;${SURIP1};"			\
++	-e "s;@SURIP2@;${SURIP2};"			\
++	-e "s;@SURIP3@;${SURIP3};"			\
++	-e "s;@SURIP4@;${SURIP4};"			\
++	-e "s;@SURIP5@;${SURIP5};"			\
++	-e "s;@SURIP6@;${SURIP6};"			\
+ 	-e "s/@SASL_MECH@/${SASL_MECH}/"		\
+ 	-e "s;@TESTDIR@;${TESTDIR};"			\
+ 	-e "s;@TESTWD@;${TESTWD};"			\
+diff --git a/tests/scripts/defines.sh b/tests/scripts/defines.sh
+index 2c9e8f76a..9816034f9 100755
+--- a/tests/scripts/defines.sh
++++ b/tests/scripts/defines.sh
+@@ -223,16 +223,23 @@ URIP2="ldap://${LOCALIP}:$PORT2/"
+ URI3="ldap://${LOCALHOST}:$PORT3/"
+ URIP3="ldap://${LOCALIP}:$PORT3/"
+ URI4="ldap://${LOCALHOST}:$PORT4/"
++URIP4="ldap://${LOCALIP}:$PORT4/"
+ URI5="ldap://${LOCALHOST}:$PORT5/"
++URIP5="ldap://${LOCALIP}:$PORT5/"
+ URI6="ldap://${LOCALHOST}:$PORT6/"
++URIP6="ldap://${LOCALIP}:$PORT6/"
+ SURI1="ldaps://${LOCALHOST}:$PORT1/"
+ SURIP1="ldaps://${LOCALIP}:$PORT1/"
+ SURI2="ldaps://${LOCALHOST}:$PORT2/"
+ SURIP2="ldaps://${LOCALIP}:$PORT2/"
+ SURI3="ldaps://${LOCALHOST}:$PORT3/"
++SURIP3="ldaps://${LOCALIP}:$PORT3/"
+ SURI4="ldaps://${LOCALHOST}:$PORT4/"
++SURIP4="ldaps://${LOCALIP}:$PORT4/"
+ SURI5="ldaps://${LOCALHOST}:$PORT5/"
++SURIP5="ldaps://${LOCALIP}:$PORT5/"
+ SURI6="ldaps://${LOCALHOST}:$PORT6/"
++SURIP6="ldaps://${LOCALIP}:$PORT6/"
+ 
+ # LDIF
+ LDIF=$DATADIR/test.ldif
+-- 
+2.26.2
+

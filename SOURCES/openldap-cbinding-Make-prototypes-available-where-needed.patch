@@ -1,0 +1,64 @@
+NOTE: The patch has been adjusted to match the base code before backporting.
+
+From cd914149a665167b2c5ae16baa0c438824588819 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Kuzn=C3=ADk?= <ondra@openldap.org>
+Date: Tue, 19 Feb 2019 10:26:39 +0000
+Subject: [PATCH] Make prototypes available where needed
+
+---
+ libraries/libldap/tls2.c   | 3 +++
+ servers/slapd/config.c     | 1 +
+ servers/slapd/proto-slap.h | 4 ++++
+ 3 files changed, 8 insertions(+)
+
+diff --git a/libraries/libldap/tls2.c b/libraries/libldap/tls2.c
+index 1a96b62c3..869de2eb5 100644
+--- a/libraries/libldap/tls2.c
++++ b/libraries/libldap/tls2.c
+@@ -76,6 +76,9 @@ static oid_name oids[] = {
+ 
+ #ifdef HAVE_TLS
+ 
++LDAP_F(int) ldap_pvt_tls_check_hostname LDAP_P(( LDAP *ld, void *s, const char *name_in ));
++LDAP_F(int) ldap_pvt_tls_get_peercert LDAP_P(( void *s, struct berval *der ));
++
+ void
+ ldap_pvt_tls_ctx_free ( void *c )
+ {
+diff --git a/servers/slapd/config.c b/servers/slapd/config.c
+index 778365fd0..2816455a3 100644
+--- a/servers/slapd/config.c
++++ b/servers/slapd/config.c
+@@ -48,6 +48,7 @@
+ #endif
+ #include "lutil.h"
+ #include "lutil_ldap.h"
++#include "ldif.h"
+ #include "config.h"
+ 
+ #ifdef _WIN32
+diff --git a/servers/slapd/proto-slap.h b/servers/slapd/proto-slap.h
+index 4bfdcf930..e33e3b7d9 100644
+--- a/servers/slapd/proto-slap.h
++++ b/servers/slapd/proto-slap.h
+@@ -755,6 +755,7 @@ LDAP_SLAPD_F (int) bindconf_unparse LDAP_P((
+ LDAP_SLAPD_F (int) bindconf_tls_set LDAP_P((
+ 	slap_bindconf *bc, LDAP *ld ));
+ LDAP_SLAPD_F (void) bindconf_free LDAP_P(( slap_bindconf *bc ));
++LDAP_SLAPD_F (void) slap_client_keepalive LDAP_P(( LDAP *ld, slap_keepalive *sk ));
+ LDAP_SLAPD_F (int) slap_client_connect LDAP_P(( LDAP **ldp, slap_bindconf *sb ));
+ LDAP_SLAPD_F (int) config_generic_wrapper LDAP_P(( Backend *be,
+ 	const char *fname, int lineno, int argc, char **argv ));
+@@ -1683,6 +1684,9 @@ LDAP_SLAPD_F (int) slap_sasl_external( Connection *c,
+ 	slap_ssf_t ssf,	/* relative strength of external security */
+ 	struct berval *authid );	/* asserted authenication id */
+ 
++LDAP_SLAPD_F (int) slap_sasl_cbinding( Connection *c,
++	struct berval *cbv );
++
+ LDAP_SLAPD_F (int) slap_sasl_reset( Connection *c );
+ LDAP_SLAPD_F (int) slap_sasl_close( Connection *c );
+ 
+-- 
+2.26.2
+
