@@ -1,0 +1,167 @@
+From 59bdc8158f51fc22cc3c6d6dd2db9e5aa4bcfdc4 Mon Sep 17 00:00:00 2001
+From: Ryan Tandy <ryan@nardis.ca>
+Date: Mon, 27 Apr 2020 23:24:16 -0700
+Subject: [PATCH] Convert test077 to LDIF config
+
+---
+ tests/data/slapd-sasl-gssapi.conf | 68 -------------------------------
+ tests/scripts/defines.sh          |  1 -
+ tests/scripts/test077-sasl-gssapi | 35 +++++++++++++---
+ 3 files changed, 30 insertions(+), 74 deletions(-)
+ delete mode 100644 tests/data/slapd-sasl-gssapi.conf
+
+diff --git a/tests/data/slapd-sasl-gssapi.conf b/tests/data/slapd-sasl-gssapi.conf
+deleted file mode 100644
+index 29ab6040b..000000000
+--- a/tests/data/slapd-sasl-gssapi.conf
++++ /dev/null
+@@ -1,68 +0,0 @@
+-# stand-alone slapd config -- for testing (with indexing)
+-# $OpenLDAP$
+-## This work is part of OpenLDAP Software <http://www.openldap.org/>.
+-##
+-## Copyright 1998-2020 The OpenLDAP Foundation.
+-## All rights reserved.
+-##
+-## Redistribution and use in source and binary forms, with or without
+-## modification, are permitted only as authorized by the OpenLDAP
+-## Public License.
+-##
+-## A copy of this license is available in the file LICENSE in the
+-## top-level directory of the distribution or, alternatively, at
+-## <http://www.OpenLDAP.org/license.html>.
+-
+-#
+-include		@SCHEMADIR@/core.schema
+-include		@SCHEMADIR@/cosine.schema
+-#
+-include		@SCHEMADIR@/corba.schema
+-include		@SCHEMADIR@/java.schema
+-include		@SCHEMADIR@/inetorgperson.schema
+-include		@SCHEMADIR@/misc.schema
+-include		@SCHEMADIR@/nis.schema
+-include		@SCHEMADIR@/openldap.schema
+-#
+-include		@SCHEMADIR@/duaconf.schema
+-include		@SCHEMADIR@/dyngroup.schema
+-
+-#
+-pidfile		@TESTDIR@/slapd.1.pid
+-argsfile	@TESTDIR@/slapd.1.args
+-
+-# SSL configuration
+-TLSCACertificateFile @TESTDIR@/tls/ca/certs/testsuiteCA.crt
+-TLSCertificateKeyFile @TESTDIR@/tls/private/localhost.key
+-TLSCertificateFile @TESTDIR@/tls/certs/localhost.crt
+-
+-#
+-rootdse 	@DATADIR@/rootdse.ldif
+-
+-#mod#modulepath	../servers/slapd/back-@BACKEND@/
+-#mod#moduleload	back_@BACKEND@.la
+-#monitormod#modulepath ../servers/slapd/back-monitor/
+-#monitormod#moduleload back_monitor.la
+-
+-
+-#######################################################################
+-# database definitions
+-#######################################################################
+-
+-database	@BACKEND@
+-suffix          "dc=example,dc=com"
+-rootdn          "cn=Manager,dc=example,dc=com"
+-rootpw          secret
+-#~null~#directory	@TESTDIR@/db.1.a
+-#indexdb#index		objectClass eq
+-#indexdb#index		mail eq
+-#ndb#dbname db_1_a
+-#ndb#include @DATADIR@/ndb.conf
+-
+-#monitor#database	monitor
+-
+-sasl-realm	@KRB5REALM@
+-sasl-host	localhost
+-
+-database	config
+-rootpw		secret
+diff --git a/tests/scripts/defines.sh b/tests/scripts/defines.sh
+index f9e5578ee..a84fd0a65 100755
+--- a/tests/scripts/defines.sh
++++ b/tests/scripts/defines.sh
+@@ -114,7 +114,6 @@ REFSLAVECONF=$DATADIR/slapd-ref-slave.conf
+ SCHEMACONF=$DATADIR/slapd-schema.conf
+ TLSCONF=$DATADIR/slapd-tls.conf
+ TLSSASLCONF=$DATADIR/slapd-tls-sasl.conf
+-SASLGSSAPICONF=$DATADIR/slapd-sasl-gssapi.conf
+ GLUECONF=$DATADIR/slapd-glue.conf
+ REFINTCONF=$DATADIR/slapd-refint.conf
+ RETCODECONF=$DATADIR/slapd-retcode.conf
+diff --git a/tests/scripts/test077-sasl-gssapi b/tests/scripts/test077-sasl-gssapi
+index 20c414600..322df60a4 100755
+--- a/tests/scripts/test077-sasl-gssapi
++++ b/tests/scripts/test077-sasl-gssapi
+@@ -21,15 +21,40 @@ if test $WITH_SASL = no ; then
+         exit 0
+ fi
+ 
++CONFDIR=$TESTDIR/slapd.d
++CONFLDIF=$TESTDIR/slapd.ldif
++
+ mkdir -p $TESTDIR $DBDIR1 $CONFDIR
+ cp -r $DATADIR/tls $TESTDIR
++$SLAPPASSWD -g -n >$CONFIGPWF
+ 
+ echo "Starting KDC for SASL/GSSAPI tests..."
+ . $SRCDIR/scripts/setup_kdc.sh
+ 
+-echo "Running slapadd to build slapd database..."
+-. $CONFFILTER $BACKEND $MONITORDB < $SASLGSSAPICONF > $CONF1
+-$SLAPADD -f $CONF1 -l $LDIFORDERED
++echo "Configuring slapd..."
++cat > $CONFLDIF <<EOF
++dn: cn=config
++objectClass: olcGlobal
++cn: config
++olcSaslHost: localhost
++olcSaslRealm: $KRB5REALM
++olcTLSCACertificateFile: $TESTDIR/tls/ca/certs/testsuiteCA.crt
++olcTLSCertificateFile: $TESTDIR/tls/certs/localhost.crt
++olcTLSCertificateKeyFile: $TESTDIR/tls/private/localhost.key
++
++dn: cn=schema,cn=config
++objectClass: olcSchemaConfig
++cn: schema
++
++include: file://$ABS_SCHEMADIR/core.ldif
++
++dn: olcDatabase={0}config,cn=config
++objectClass: olcDatabaseConfig
++olcDatabase: {0}config
++olcRootPW:< file://$TESTDIR/configpw
++
++EOF
++$SLAPADD -F $CONFDIR -n 0 -l $CONFLDIF
+ RC=$?
+ if test $RC != 0 ; then
+ 	echo "slapadd failed ($RC)!"
+@@ -38,7 +63,7 @@ if test $RC != 0 ; then
+ fi
+ 
+ echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
+-$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++$SLAPD -F $CONFDIR -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
+ PID=$!
+ if test $WAIT != 0 ; then
+     echo PID $PID
+@@ -151,7 +176,7 @@ else
+ 	for acb in "none" "tls-unique" "tls-endpoint" ; do
+ 
+ 		echo "Modifying slapd's olcSaslCBinding to ${acb} ..."
+-		$LDAPMODIFY -D cn=config -H $URI1 -w secret <<EOF > $TESTOUT 2>&1
++		$LDAPMODIFY -D cn=config -H $URI1 -y $CONFIGPWF <<EOF > $TESTOUT 2>&1
+ dn: cn=config
+ changetype: modify
+ replace: olcSaslCBinding
+-- 
+2.26.2
+

@@ -1,0 +1,27 @@
+From 4cac398b19c21ad56949ef7e67e285c6c8e7ecea Mon Sep 17 00:00:00 2001
+From: Isaac Boukris <iboukris@gmail.com>
+Date: Thu, 23 Apr 2020 22:47:32 +0200
+Subject: [PATCH] ITS#9189 - initialize ldo_sasl_cbinding in
+ LDAP_LDO_SASL_NULLARG
+
+Reported-by: Ryan Tandy @ryan
+---
+ libraries/libldap/ldap-int.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/libraries/libldap/ldap-int.h b/libraries/libldap/ldap-int.h
+index c6c6891a9..336448115 100644
+--- a/libraries/libldap/ldap-int.h
++++ b/libraries/libldap/ldap-int.h
+@@ -301,7 +301,7 @@ struct ldapoptions {
+ 	/* SASL Security Properties */
+ 	struct sasl_security_properties	ldo_sasl_secprops;
+ 	int ldo_sasl_cbinding;
+-#define LDAP_LDO_SASL_NULLARG ,0,0,0,0,{0}
++#define LDAP_LDO_SASL_NULLARG ,0,0,0,0,{0},0
+ #else
+ #define LDAP_LDO_SASL_NULLARG
+ #endif
+-- 
+2.26.2
+

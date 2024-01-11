@@ -1,0 +1,582 @@
+NOTE: The patch has been adjusted to match the base code before backporting.
+
+From 8a259e3df16def3f05828f355e98a5089cd6e6d0 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Ond=C5=99ej=20Kuzn=C3=ADk?= <ondra@openldap.org>
+Date: Thu, 14 Jun 2018 16:14:15 +0100
+Subject: [PATCH] ITS#8573 allow all libldap options in tools -o option
+
+---
+ clients/tools/common.c     |  15 ++-
+ doc/devel/args             |   2 +-
+ doc/man/man1/ldapcompare.1 |   9 +-
+ doc/man/man1/ldapdelete.1  |   9 +-
+ doc/man/man1/ldapexop.1    |   9 +-
+ doc/man/man1/ldapmodify.1  |   9 +-
+ doc/man/man1/ldapmodrdn.1  |   9 +-
+ doc/man/man1/ldappasswd.1  |   9 +-
+ doc/man/man1/ldapsearch.1  |   9 +-
+ doc/man/man1/ldapwhoami.1  |  13 ++-
+ doc/man/man8/slapcat.8     |   2 +-
+ include/ldap_pvt.h         |   5 +
+ libraries/libldap/init.c   | 231 ++++++++++++++++++++++---------------
+ servers/slapd/slapcommon.c |   5 +-
+ 14 files changed, 200 insertions(+), 136 deletions(-)
+
+diff --git a/clients/tools/common.c b/clients/tools/common.c
+index 1cd8a2c1b..b1edffdaf 100644
+--- a/clients/tools/common.c
++++ b/clients/tools/common.c
+@@ -374,9 +374,9 @@ N_("  -I         use SASL Interactive mode\n"),
+ N_("  -n         show what would be done but don't actually do it\n"),
+ N_("  -N         do not use reverse DNS to canonicalize SASL host name\n"),
+ N_("  -O props   SASL security properties\n"),
+-N_("  -o <opt>[=<optparam>] general options\n"),
++N_("  -o <opt>[=<optparam>] any libldap ldap.conf options, plus\n"),
++N_("             ldif_wrap=<width> (in columns, or \"no\" for no wrapping)\n"),
+ N_("             nettimeout=<timeout> (in seconds, or \"none\" or \"max\")\n"),
+-N_("             ldif-wrap=<width> (in columns, or \"no\" for no wrapping)\n"),
+ N_("  -p port    port on LDAP server\n"),
+ N_("  -Q         use SASL Quiet mode\n"),
+ N_("  -R realm   SASL realm\n"),
+@@ -838,6 +838,11 @@ tool_args( int argc, char **argv )
+ 			if ( (cvalue = strchr( control, '=' )) != NULL ) {
+ 				*cvalue++ = '\0';
+ 			}
++			for ( next=control; *next; next++ ) {
++				if ( *next == '-' ) {
++					*next = '_';
++				}
++			}
+ 
+ 			if ( strcasecmp( control, "nettimeout" ) == 0 ) {
+ 				if( nettimeout.tv_sec != -1 ) {
+@@ -867,7 +872,7 @@ tool_args( int argc, char **argv )
+ 	 				exit( EXIT_FAILURE );
+  				}
+ 
+-			} else if ( strcasecmp( control, "ldif-wrap" ) == 0 ) {
++			} else if ( strcasecmp( control, "ldif_wrap" ) == 0 ) {
+ 				if ( cvalue == 0 ) {
+ 					ldif_wrap = LDIF_LINE_WIDTH;
+ 
+@@ -878,13 +883,13 @@ tool_args( int argc, char **argv )
+ 					unsigned int u;
+ 					if ( lutil_atou( &u, cvalue ) ) {
+ 						fprintf( stderr,
+-							_("Unable to parse ldif-wrap=\"%s\"\n"), cvalue );
++							_("Unable to parse ldif_wrap=\"%s\"\n"), cvalue );
+ 		 				exit( EXIT_FAILURE );
+ 					}
+ 					ldif_wrap = (ber_len_t)u;
+ 				}
+ 
+-			} else {
++			} else if ( ldap_pvt_conf_option( control, cvalue, 1 ) ) {
+ 				fprintf( stderr, "Invalid general option name: %s\n",
+ 					control );
+ 				usage();
+diff --git a/doc/devel/args b/doc/devel/args
+index 9796fe528..c5aa02f11 100644
+--- a/doc/devel/args
++++ b/doc/devel/args
+@@ -28,7 +28,7 @@ ldapwhoami       * DE**HI**  NO QR  UVWXYZ   def*h*** *nop*    vwxy
+ 	-h host
+ 	-n no-op
+ 	-N no (SASLprep) normalization of simple bind password
+-	-o general options (currently nettimeout and ldif-wrap only)
++	-o general libldap options (plus ldif_wrap and nettimeout for backwards comp.)
+ 	-p port
+ 	-v verbose
+ 	-V version
+diff --git a/doc/man/man1/ldapcompare.1 b/doc/man/man1/ldapcompare.1
+index 9e66cd4b2..a0e58d7c3 100644
+--- a/doc/man/man1/ldapcompare.1
++++ b/doc/man/man1/ldapcompare.1
+@@ -186,13 +186,14 @@ Compare extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapdelete.1 b/doc/man/man1/ldapdelete.1
+index 394d35275..85dbf4360 100644
+--- a/doc/man/man1/ldapdelete.1
++++ b/doc/man/man1/ldapdelete.1
+@@ -192,13 +192,14 @@ Delete extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapexop.1 b/doc/man/man1/ldapexop.1
+index 503d681ca..26e1730a8 100644
+--- a/doc/man/man1/ldapexop.1
++++ b/doc/man/man1/ldapexop.1
+@@ -189,13 +189,14 @@ Specify general extensions.  \'!\' indicates criticality.
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapmodify.1 b/doc/man/man1/ldapmodify.1
+index 2792d460b..6c277d89c 100644
+--- a/doc/man/man1/ldapmodify.1
++++ b/doc/man/man1/ldapmodify.1
+@@ -255,13 +255,14 @@ Modify extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapmodrdn.1 b/doc/man/man1/ldapmodrdn.1
+index 5d0f3fcd9..b24e500fe 100644
+--- a/doc/man/man1/ldapmodrdn.1
++++ b/doc/man/man1/ldapmodrdn.1
+@@ -186,13 +186,14 @@ Modrdn extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldappasswd.1 b/doc/man/man1/ldappasswd.1
+index 36857ab8f..a2805e57b 100644
+--- a/doc/man/man1/ldappasswd.1
++++ b/doc/man/man1/ldappasswd.1
+@@ -188,13 +188,14 @@ Passwd Modify extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapsearch.1 b/doc/man/man1/ldapsearch.1
+index 036ce6245..1914eafbf 100644
+--- a/doc/man/man1/ldapsearch.1
++++ b/doc/man/man1/ldapsearch.1
+@@ -332,13 +332,14 @@ Search extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man1/ldapwhoami.1 b/doc/man/man1/ldapwhoami.1
+index 5912af5ba..2c8cfded2 100644
+--- a/doc/man/man1/ldapwhoami.1
++++ b/doc/man/man1/ldapwhoami.1
+@@ -143,13 +143,18 @@ WhoAmI extensions:
+ .TP
+ .BI \-o \ opt \fR[= optparam \fR]
+ 
+-Specify general options.
+-
+-General options:
++Specify any
++.BR ldap.conf (5)
++option or one of the following:
+ .nf
+   nettimeout=<timeout>  (in seconds, or "none" or "max")
+-  ldif-wrap=<width>     (in columns, or "no" for no wrapping)
++  ldif_wrap=<width>     (in columns, or "no" for no wrapping)
+ .fi
++
++.B -o
++option that can be passed here, check
++.BR ldap.conf (5)
++for details.
+ .TP
+ .BI \-O \ security-properties
+ Specify SASL security properties.
+diff --git a/doc/man/man8/slapcat.8 b/doc/man/man8/slapcat.8
+index 57c41deff..2085e9176 100644
+--- a/doc/man/man8/slapcat.8
++++ b/doc/man/man8/slapcat.8
+@@ -149,7 +149,7 @@ Possible generic options/values are:
+               syslog\-level=<level> (see `\-S' in slapd(8))
+               syslog\-user=<user>   (see `\-l' in slapd(8))
+ 
+-              ldif-wrap={no|<n>}
++              ldif_wrap={no|<n>}
+ 
+ .in
+ \fIn\fP is the number of columns allowed for the LDIF output
+diff --git a/include/ldap_pvt.h b/include/ldap_pvt.h
+index 31f37277c..e86b032cb 100644
+--- a/include/ldap_pvt.h
++++ b/include/ldap_pvt.h
+@@ -326,6 +326,11 @@ struct ldifrecord;
+ LDAP_F ( int ) ldap_pvt_discard LDAP_P((
+ 	struct ldap *ld, ber_int_t msgid ));
+ 
++/* init.c */
++LDAP_F( int )
++ldap_pvt_conf_option LDAP_P((
++	char *cmd, char *opt, int userconf ));
++
+ /* messages.c */
+ LDAP_F( BerElement * )
+ ldap_get_message_ber LDAP_P((
+diff --git a/libraries/libldap/init.c b/libraries/libldap/init.c
+index 548d2c1cb..4a7e81bdb 100644
+--- a/libraries/libldap/init.c
++++ b/libraries/libldap/init.c
+@@ -147,6 +147,141 @@ static const struct ol_attribute {
+ #define MAX_LDAP_ATTR_LEN  sizeof("GSSAPI_ALLOW_REMOTE_PRINCIPAL")
+ #define MAX_LDAP_ENV_PREFIX_LEN 8
+ 
++static int
++ldap_int_conf_option(
++	struct ldapoptions *gopts,
++	char *cmd, char *opt, int userconf )
++{
++	int i;
++
++	for(i=0; attrs[i].type != ATTR_NONE; i++) {
++		void *p;
++
++		if( !userconf && attrs[i].useronly ) {
++			continue;
++		}
++
++		if(strcasecmp(cmd, attrs[i].name) != 0) {
++			continue;
++		}
++
++		switch(attrs[i].type) {
++		case ATTR_BOOL:
++			if((strcasecmp(opt, "on") == 0)
++				|| (strcasecmp(opt, "yes") == 0)
++				|| (strcasecmp(opt, "true") == 0))
++			{
++				LDAP_BOOL_SET(gopts, attrs[i].offset);
++
++			} else {
++				LDAP_BOOL_CLR(gopts, attrs[i].offset);
++			}
++
++			break;
++
++		case ATTR_INT: {
++			char *next;
++			long l;
++			p = &((char *) gopts)[attrs[i].offset];
++			l = strtol( opt, &next, 10 );
++			if ( next != opt && next[ 0 ] == '\0' ) {
++				* (int*) p = l;
++			}
++			} break;
++
++		case ATTR_KV: {
++				const struct ol_keyvalue *kv;
++
++				for(kv = attrs[i].data;
++					kv->key != NULL;
++					kv++) {
++
++					if(strcasecmp(opt, kv->key) == 0) {
++						p = &((char *) gopts)[attrs[i].offset];
++						* (int*) p = kv->value;
++						break;
++					}
++				}
++			} break;
++
++		case ATTR_STRING:
++			p = &((char *) gopts)[attrs[i].offset];
++			if (* (char**) p != NULL) LDAP_FREE(* (char**) p);
++			* (char**) p = LDAP_STRDUP(opt);
++			break;
++		case ATTR_OPTION:
++			ldap_set_option( NULL, attrs[i].offset, opt );
++			break;
++		case ATTR_SASL:
++#ifdef HAVE_CYRUS_SASL
++			ldap_int_sasl_config( gopts, attrs[i].offset, opt );
++#endif
++			break;
++		case ATTR_GSSAPI:
++#ifdef HAVE_GSSAPI
++			ldap_int_gssapi_config( gopts, attrs[i].offset, opt );
++#endif
++			break;
++		case ATTR_TLS:
++#ifdef HAVE_TLS
++			ldap_int_tls_config( NULL, attrs[i].offset, opt );
++#endif
++			break;
++		case ATTR_OPT_TV: {
++			struct timeval tv;
++			char *next;
++			tv.tv_usec = 0;
++			tv.tv_sec = strtol( opt, &next, 10 );
++			if ( next != opt && next[ 0 ] == '\0' && tv.tv_sec > 0 ) {
++				(void)ldap_set_option( NULL, attrs[i].offset, (const void *)&tv );
++			}
++			} break;
++		case ATTR_OPT_INT: {
++			long l;
++			char *next;
++			l = strtol( opt, &next, 10 );
++			if ( next != opt && next[ 0 ] == '\0' && l > 0 && (long)((int)l) == l ) {
++				int v = (int)l;
++				(void)ldap_set_option( NULL, attrs[i].offset, (const void *)&v );
++			}
++			} break;
++		}
++
++		break;
++	}
++
++	if ( attrs[i].type == ATTR_NONE ) {
++		Debug( LDAP_DEBUG_TRACE, "ldap_int_tls_config: "
++				"unknown option '%s'",
++				cmd, 0, 0 );
++		return 1;
++	}
++
++	return 0;
++}
++
++int
++ldap_pvt_conf_option(
++	char *cmd, char *opt, int userconf )
++{
++	struct ldapoptions *gopts;
++	int rc = LDAP_OPT_ERROR;
++
++	/* Get pointer to global option structure */
++	gopts = LDAP_INT_GLOBAL_OPT();
++	if (NULL == gopts) {
++		return LDAP_NO_MEMORY;
++	}
++
++	if ( gopts->ldo_valid != LDAP_INITIALIZED ) {
++		ldap_int_initialize(gopts, NULL);
++		if ( gopts->ldo_valid != LDAP_INITIALIZED )
++			return LDAP_LOCAL_ERROR;
++	}
++
++	return ldap_int_conf_option( gopts, cmd, opt, userconf );
++}
++
+ static void openldap_ldap_init_w_conf(
+ 	const char *file, int userconf )
+ {
+@@ -212,101 +347,7 @@ static void openldap_ldap_init_w_conf(
+ 		while(isspace((unsigned char)*start)) start++;
+ 		opt = start;
+ 
+-		for(i=0; attrs[i].type != ATTR_NONE; i++) {
+-			void *p;
+-
+-			if( !userconf && attrs[i].useronly ) {
+-				continue;
+-			}
+-
+-			if(strcasecmp(cmd, attrs[i].name) != 0) {
+-				continue;
+-			}
+-
+-			switch(attrs[i].type) {
+-			case ATTR_BOOL:
+-				if((strcasecmp(opt, "on") == 0) 
+-					|| (strcasecmp(opt, "yes") == 0)
+-					|| (strcasecmp(opt, "true") == 0))
+-				{
+-					LDAP_BOOL_SET(gopts, attrs[i].offset);
+-
+-				} else {
+-					LDAP_BOOL_CLR(gopts, attrs[i].offset);
+-				}
+-
+-				break;
+-
+-			case ATTR_INT: {
+-				char *next;
+-				long l;
+-				p = &((char *) gopts)[attrs[i].offset];
+-				l = strtol( opt, &next, 10 );
+-				if ( next != opt && next[ 0 ] == '\0' ) {
+-					* (int*) p = l;
+-				}
+-				} break;
+-
+-			case ATTR_KV: {
+-					const struct ol_keyvalue *kv;
+-
+-					for(kv = attrs[i].data;
+-						kv->key != NULL;
+-						kv++) {
+-
+-						if(strcasecmp(opt, kv->key) == 0) {
+-							p = &((char *) gopts)[attrs[i].offset];
+-							* (int*) p = kv->value;
+-							break;
+-						}
+-					}
+-				} break;
+-
+-			case ATTR_STRING:
+-				p = &((char *) gopts)[attrs[i].offset];
+-				if (* (char**) p != NULL) LDAP_FREE(* (char**) p);
+-				* (char**) p = LDAP_STRDUP(opt);
+-				break;
+-			case ATTR_OPTION:
+-				ldap_set_option( NULL, attrs[i].offset, opt );
+-				break;
+-			case ATTR_SASL:
+-#ifdef HAVE_CYRUS_SASL
+-			   	ldap_int_sasl_config( gopts, attrs[i].offset, opt );
+-#endif
+-				break;
+-			case ATTR_GSSAPI:
+-#ifdef HAVE_GSSAPI
+-				ldap_int_gssapi_config( gopts, attrs[i].offset, opt );
+-#endif
+-				break;
+-			case ATTR_TLS:
+-#ifdef HAVE_TLS
+-			   	ldap_int_tls_config( NULL, attrs[i].offset, opt );
+-#endif
+-				break;
+-			case ATTR_OPT_TV: {
+-				struct timeval tv;
+-				char *next;
+-				tv.tv_usec = 0;
+-				tv.tv_sec = strtol( opt, &next, 10 );
+-				if ( next != opt && next[ 0 ] == '\0' && tv.tv_sec > 0 ) {
+-					(void)ldap_set_option( NULL, attrs[i].offset, (const void *)&tv );
+-				}
+-				} break;
+-			case ATTR_OPT_INT: {
+-				long l;
+-				char *next;
+-				l = strtol( opt, &next, 10 );
+-				if ( next != opt && next[ 0 ] == '\0' && l > 0 && (long)((int)l) == l ) {
+-					int v = (int)l;
+-					(void)ldap_set_option( NULL, attrs[i].offset, (const void *)&v );
+-				}
+-				} break;
+-			}
+-
+-			break;
+-		}
++		ldap_int_conf_option( gopts, cmd, opt, userconf );
+ 	}
+ 
+ 	fclose(fp);
+diff --git a/servers/slapd/slapcommon.c b/servers/slapd/slapcommon.c
+index 87ea0ea06..39384e5e9 100644
+--- a/servers/slapd/slapcommon.c
++++ b/servers/slapd/slapcommon.c
+@@ -228,7 +228,8 @@ parse_slapopt( int tool, int *mode )
+ 			break;
+ 		}
+ 
+-	} else if ( strncasecmp( optarg, "ldif-wrap", len ) == 0 ) {
++	} else if ( ( strncasecmp( optarg, "ldif_wrap", len ) == 0 ) ||
++			( strncasecmp( optarg, "ldif-wrap", len ) == 0 ) ) {
+ 		switch ( tool ) {
+ 		case SLAPCAT:
+ 			if ( strcasecmp( p, "no" ) == 0 ) {
+@@ -237,7 +238,7 @@ parse_slapopt( int tool, int *mode )
+ 			} else {
+ 				unsigned int u;
+ 				if ( lutil_atou( &u, p ) ) {
+-					Debug( LDAP_DEBUG_ANY, "unable to parse ldif-wrap=\"%s\".\n", p, 0, 0 );
++					Debug( LDAP_DEBUG_ANY, "unable to parse ldif_wrap=\"%s\".\n", p, 0, 0 );
+ 					return -1;
+ 				}
+ 				ldif_wrap = (ber_len_t)u;
+-- 
+2.26.2
+

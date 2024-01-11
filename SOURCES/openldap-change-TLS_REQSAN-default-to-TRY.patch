@@ -1,0 +1,46 @@
+From 2dfe3f35c7fef4792f15f0b3f9c9a10e5f9a4692 Mon Sep 17 00:00:00 2001
+From: Simon Pichugin <spichugi@rehdat.com>
+Date: Thu, 5 Aug 2021 16:15:09 +0200
+Subject: [PATCH] Change TLS_REQSAN default to TRY
+
+---
+ doc/man/man5/ldap.conf.5 | 2 +-
+ libraries/libldap/init.c | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/doc/man/man5/ldap.conf.5 b/doc/man/man5/ldap.conf.5
+index cde2c875f..9f1aa2c0a 100644
+--- a/doc/man/man5/ldap.conf.5
++++ b/doc/man/man5/ldap.conf.5
+@@ -479,7 +479,6 @@ The client will not check any SAN in the certificate.
+ The SAN is checked against the specified hostname. If a SAN is
+ present but none match the specified hostname, the SANs are ignored
+ and the usual check against the certificate DN is used.
+-This is the default setting.
+ .TP
+ .B try
+ The SAN is checked against the specified hostname. If no SAN is present
+@@ -487,6 +486,7 @@ in the server certificate, the usual check against the certificate DN
+ is used. If a SAN is present but doesn't match the specified hostname,
+ the session is immediately terminated. This setting may be preferred
+ when a mix of certs with and without SANs are in use.
++This is the default setting.
+ .TP
+ .B demand | hard
+ These keywords are equivalent. The SAN is checked against the specified
+diff --git a/libraries/libldap/init.c b/libraries/libldap/init.c
+index 0d91808ec..fa4c176fd 100644
+--- a/libraries/libldap/init.c
++++ b/libraries/libldap/init.c
+@@ -625,7 +625,7 @@ void ldap_int_initialize_global_options( struct ldapoptions *gopts, int *dbglvl
+ 	gopts->ldo_tls_connect_cb = NULL;
+ 	gopts->ldo_tls_connect_arg = NULL;
+ 	gopts->ldo_tls_require_cert = LDAP_OPT_X_TLS_DEMAND;
+-	gopts->ldo_tls_require_san = LDAP_OPT_X_TLS_ALLOW;
++	gopts->ldo_tls_require_san = LDAP_OPT_X_TLS_TRY;
+ #endif
+ 	gopts->ldo_keepalive_probes = 0;
+ 	gopts->ldo_keepalive_interval = 0;
+-- 
+2.31.1
+

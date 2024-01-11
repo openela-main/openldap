@@ -1,0 +1,2108 @@
+From eb087e0861f207858a4e08c72836a86f26d9701c Mon Sep 17 00:00:00 2001
+From: Quanah Gibson-Mount <quanah@openldap.org>
+Date: Thu, 14 Jun 2018 16:12:59 +0100
+Subject: [PATCH] ITS#8573 TLS option test suite
+
+---
+ configure                                     |   4 +
+ configure.in                                  |   4 +
+ tests/data/slapd-tls-sasl.conf                |  65 ++
+ tests/data/slapd-tls.conf                     |  61 ++
+ tests/data/tls/ca/certs/testsuiteCA.crt       |  16 +
+ tests/data/tls/ca/private/testsuiteCA.key     |  16 +
+ .../tls/certs/bjensen@mailgw.example.com.crt  |  16 +
+ tests/data/tls/certs/localhost.crt            |  16 +
+ tests/data/tls/conf/openssl.cnf               | 129 ++++
+ tests/data/tls/create-crt.sh                  |  78 +++
+ .../private/bjensen@mailgw.example.com.key    |  16 +
+ tests/data/tls/private/localhost.key          |  16 +
+ tests/run.in                                  |   3 +-
+ tests/scripts/defines.sh                      |  21 +-
+ tests/scripts/test067-tls                     | 140 +++++
+ tests/scripts/test068-sasl-tls-external       | 102 ++++
+ .../test069-delta-multimaster-starttls        | 574 ++++++++++++++++++
+ tests/scripts/test070-delta-multimaster-ldaps | 571 +++++++++++++++++
+ 18 files changed, 1846 insertions(+), 2 deletions(-)
+ create mode 100644 tests/data/slapd-tls-sasl.conf
+ create mode 100644 tests/data/slapd-tls.conf
+ create mode 100644 tests/data/tls/ca/certs/testsuiteCA.crt
+ create mode 100644 tests/data/tls/ca/private/testsuiteCA.key
+ create mode 100644 tests/data/tls/certs/bjensen@mailgw.example.com.crt
+ create mode 100644 tests/data/tls/certs/localhost.crt
+ create mode 100644 tests/data/tls/conf/openssl.cnf
+ create mode 100755 tests/data/tls/create-crt.sh
+ create mode 100644 tests/data/tls/private/bjensen@mailgw.example.com.key
+ create mode 100644 tests/data/tls/private/localhost.key
+ create mode 100755 tests/scripts/test067-tls
+ create mode 100755 tests/scripts/test068-sasl-tls-external
+ create mode 100755 tests/scripts/test069-delta-multimaster-starttls
+ create mode 100755 tests/scripts/test070-delta-multimaster-ldaps
+
+diff --git a/configure b/configure
+index 16d4ab884..29b7ad91d 100755
+--- a/configure
++++ b/configure
+@@ -761,6 +761,7 @@ AUTH_LIBS
+ LIBSLAPI
+ SLAPI_LIBS
+ MODULES_LIBS
++WITH_TLS_TYPE
+ TLS_LIBS
+ SASL_LIBS
+ KRB5_LIBS
+@@ -5223,6 +5224,7 @@ KRB4_LIBS=
+ KRB5_LIBS=
+ SASL_LIBS=
+ TLS_LIBS=
++WITH_TLS_TYPE=
+ MODULES_LIBS=
+ SLAPI_LIBS=
+ LIBSLAPI=
+@@ -15701,6 +15703,7 @@ fi
+ 		if test $have_openssl = yes ; then
+ 			ol_with_tls=openssl
+ 			ol_link_tls=yes
++			WITH_TLS_TYPE=openssl
+ 
+ 
+ $as_echo "#define HAVE_OPENSSL 1" >>confdefs.h
+@@ -15835,6 +15838,7 @@ fi
+ 			if test $have_gnutls = yes ; then
+ 				ol_with_tls=gnutls
+ 				ol_link_tls=yes
++				WITH_TLS_TYPE=gnutls
+ 
+ 				TLS_LIBS="-lgnutls"
+ 
+diff --git a/configure.in b/configure.in
+index ee25a4a90..60c446096 100644
+--- a/configure.in
++++ b/configure.in
+@@ -610,6 +610,7 @@ KRB4_LIBS=
+ KRB5_LIBS=
+ SASL_LIBS=
+ TLS_LIBS=
++WITH_TLS_TYPE=
+ MODULES_LIBS=
+ SLAPI_LIBS=
+ LIBSLAPI=
+@@ -1210,6 +1211,7 @@ if test $ol_with_tls = openssl || test $ol_with_tls = auto ; then
+ 		if test $have_openssl = yes ; then
+ 			ol_with_tls=openssl
+ 			ol_link_tls=yes
++			WITH_TLS_TYPE=openssl
+ 
+ 			AC_DEFINE(HAVE_OPENSSL, 1, 
+ 				[define if you have OpenSSL])
+@@ -1250,6 +1252,7 @@ if test $ol_link_tls = no ; then
+ 			if test $have_gnutls = yes ; then
+ 				ol_with_tls=gnutls
+ 				ol_link_tls=yes
++				WITH_TLS_TYPE=gnutls
+ 
+ 				TLS_LIBS="-lgnutls"
+ 
+@@ -3261,6 +3264,7 @@ AC_SUBST(KRB4_LIBS)
+ AC_SUBST(KRB5_LIBS)
+ AC_SUBST(SASL_LIBS)
+ AC_SUBST(TLS_LIBS)
++AC_SUBST(WITH_TLS_TYPE)
+ AC_SUBST(MODULES_LIBS)
+ AC_SUBST(SLAPI_LIBS)
+ AC_SUBST(LIBSLAPI)
+diff --git a/tests/data/slapd-tls-sasl.conf b/tests/data/slapd-tls-sasl.conf
+new file mode 100644
+index 000000000..f4bb0773e
+--- /dev/null
++++ b/tests/data/slapd-tls-sasl.conf
+@@ -0,0 +1,65 @@
++# stand-alone slapd config -- for testing (with indexing)
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++#
++include		@SCHEMADIR@/core.schema
++include		@SCHEMADIR@/cosine.schema
++#
++include		@SCHEMADIR@/corba.schema
++include		@SCHEMADIR@/java.schema
++include		@SCHEMADIR@/inetorgperson.schema
++include		@SCHEMADIR@/misc.schema
++include		@SCHEMADIR@/nis.schema
++include		@SCHEMADIR@/openldap.schema
++#
++include		@SCHEMADIR@/duaconf.schema
++include		@SCHEMADIR@/dyngroup.schema
++include		@SCHEMADIR@/ppolicy.schema
++
++#
++pidfile		@TESTDIR@/slapd.1.pid
++argsfile	@TESTDIR@/slapd.1.args
++
++# SSL configuration
++TLSCACertificateFile @TESTDIR@/tls/ca/certs/testsuiteCA.crt
++TLSCertificateKeyFile @TESTDIR@/tls/private/localhost.key
++TLSCertificateFile @TESTDIR@/tls/certs/localhost.crt
++TLSVerifyClient hard
++
++#
++rootdse 	@DATADIR@/rootdse.ldif
++
++#mod#modulepath	../servers/slapd/back-@BACKEND@/
++#mod#moduleload	back_@BACKEND@.la
++#monitormod#modulepath ../servers/slapd/back-monitor/
++#monitormod#moduleload back_monitor.la
++
++authz-regexp "email=([^,]*),cn=[^,]*,ou=OpenLDAP,o=OpenLDAP Foundation,st=CA,c=US" ldap:///ou=People,dc=example,dc=com??sub?(mail=$1)
++
++#######################################################################
++# database definitions
++#######################################################################
++
++database	@BACKEND@
++suffix          "dc=example,dc=com"
++rootdn          "cn=Manager,dc=example,dc=com"
++rootpw          secret
++#~null~#directory	@TESTDIR@/db.1.a
++#indexdb#index		objectClass eq
++#indexdb#index		mail eq
++#ndb#dbname db_1_a
++#ndb#include @DATADIR@/ndb.conf
++
++#monitor#database	monitor
+diff --git a/tests/data/slapd-tls.conf b/tests/data/slapd-tls.conf
+new file mode 100644
+index 000000000..6a7785557
+--- /dev/null
++++ b/tests/data/slapd-tls.conf
+@@ -0,0 +1,61 @@
++# stand-alone slapd config -- for testing (with indexing)
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++#
++include		@SCHEMADIR@/core.schema
++include		@SCHEMADIR@/cosine.schema
++#
++include		@SCHEMADIR@/corba.schema
++include		@SCHEMADIR@/java.schema
++include		@SCHEMADIR@/inetorgperson.schema
++include		@SCHEMADIR@/misc.schema
++include		@SCHEMADIR@/nis.schema
++include		@SCHEMADIR@/openldap.schema
++#
++include		@SCHEMADIR@/duaconf.schema
++include		@SCHEMADIR@/dyngroup.schema
++include		@SCHEMADIR@/ppolicy.schema
++
++#
++pidfile		@TESTDIR@/slapd.1.pid
++argsfile	@TESTDIR@/slapd.1.args
++
++# SSL configuration
++TLSCertificateKeyFile @TESTDIR@/tls/private/localhost.key
++TLSCertificateFile @TESTDIR@/tls/certs/localhost.crt
++
++#
++rootdse 	@DATADIR@/rootdse.ldif
++
++#mod#modulepath	../servers/slapd/back-@BACKEND@/
++#mod#moduleload	back_@BACKEND@.la
++#monitormod#modulepath ../servers/slapd/back-monitor/
++#monitormod#moduleload back_monitor.la
++
++#######################################################################
++# database definitions
++#######################################################################
++
++database	@BACKEND@
++suffix          "dc=example,dc=com"
++rootdn          "cn=Manager,dc=example,dc=com"
++rootpw          secret
++#~null~#directory	@TESTDIR@/db.1.a
++#indexdb#index		objectClass eq
++#indexdb#index		mail eq
++#ndb#dbname db_1_a
++#ndb#include @DATADIR@/ndb.conf
++
++#monitor#database	monitor
+diff --git a/tests/data/tls/ca/certs/testsuiteCA.crt b/tests/data/tls/ca/certs/testsuiteCA.crt
+new file mode 100644
+index 000000000..7458e7461
+--- /dev/null
++++ b/tests/data/tls/ca/certs/testsuiteCA.crt
+@@ -0,0 +1,16 @@
++-----BEGIN CERTIFICATE-----
++MIICgjCCAeugAwIBAgIJAJGJtO9oGgLiMA0GCSqGSIb3DQEBCwUAMFkxCzAJBgNV
++BAYTAlVTMQswCQYDVQQIDAJDQTEcMBoGA1UECgwTT3BlbkxEQVAgRm91bmRhdGlv
++bjEfMB0GA1UECwwWT3BlbkxEQVAgVGVzdCBTdWl0ZSBDQTAgFw0xNzAxMTkyMDI0
++NTFaGA8yNTE4MDIwMjIwMjQ1MVowWTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNB
++MRwwGgYDVQQKDBNPcGVuTERBUCBGb3VuZGF0aW9uMR8wHQYDVQQLDBZPcGVuTERB
++UCBUZXN0IFN1aXRlIENBMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3xcMd
++rvEPxIzZ0FnGVfk6sLXW//4UbBZmmsHSNT7UDNpL301QrsOaATyiOMSPHxmQoLPb
++lYOtTCPaHN9/KIHoCnEQ6tJRe30okA0DFnZvSH5jAm9E2QvsXMVXU5XIi9dZTNdL
++6jwRajPQP3YfK+PyrtIqc0IvhB4Ori39vrFLpQIDAQABo1AwTjAdBgNVHQ4EFgQU
++7fEPwfVJESrieK5MzzjBSK8xEfIwHwYDVR0jBBgwFoAU7fEPwfVJESrieK5MzzjB
++SK8xEfIwDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOBgQBtXLZWW6ZKZux/
++wk7uLNZl01kPJUBiI+yMU5uY5PgOph1CpaUXp3QftCb0yRQ2g5d0CNYI5DyXuHws
++ZSZRFF8SRwm3AogkMzYKenPF5m2OXSpvOMdnlbbFmIJnvwUfKhtinw+r0zvW8I8Q
++aL52EFPS0o3tiAJXS82U2wrQdJ0YEw==
++-----END CERTIFICATE-----
+diff --git a/tests/data/tls/ca/private/testsuiteCA.key b/tests/data/tls/ca/private/testsuiteCA.key
+new file mode 100644
+index 000000000..2e14d7033
+--- /dev/null
++++ b/tests/data/tls/ca/private/testsuiteCA.key
+@@ -0,0 +1,16 @@
++-----BEGIN PRIVATE KEY-----
++MIICdQIBADANBgkqhkiG9w0BAQEFAASCAl8wggJbAgEAAoGBALfFwx2u8Q/EjNnQ
++WcZV+Tqwtdb//hRsFmaawdI1PtQM2kvfTVCuw5oBPKI4xI8fGZCgs9uVg61MI9oc
++338ogegKcRDq0lF7fSiQDQMWdm9IfmMCb0TZC+xcxVdTlciL11lM10vqPBFqM9A/
++dh8r4/Ku0ipzQi+EHg6uLf2+sUulAgMBAAECgYBDOb7kjuh0Iix8SXFt0ml3hMkg
++O0kQ43FWW2pnoT64h3MbqjY4O5YmMimiFi4hRPkvJPpma01eCapb0ZAYjhLm1bpf
++7Ey+724CEN3/DnorbQ3b/Fe2AVl4msJKEQFoercnaS9tFDPoijzH/quC2agH41tn
++rGWTpahq6JUIP6xkwQJBAPHJZVHGQ8P/5bGxqOkPLtjIfDLtAgInMxZgDjHhHw2f
++wGoeRrZ3J1yW0tnWtTXBN+5fKjCd6QpEvBmwhiZ+S+0CQQDCk1JBq64UotqeSWnk
++AmhRMyVs87P0DPW2Gg8y96Q3d5Rwmy65ITr4pf/xufcSkrTSObDLhfhRyJKz7W4l
++vjeZAkBq99CtZuugENxLyu+RfDgbjEb2OMjErxb49TISeyhD3MNBr3dVTk3Jtqg9
++27F7wKm/+bYuoA3zjwkwzFntOb7ZAkAY0Hz/DwwGabaD1U0B3SS8pk8xk+rxRu3X
++KX+iul5hDIkLy16sEYbZyyHXDCZsYfVZki3v5sgCdhfvhmozugyRAkBQgCeI8K1N
++I9rHrcMZUjVT/3AdjSu6xIM87Vv/oIzGUNaadnQONRaXZ+Kp5pv9j4B/18rPcQwL
+++b2qljWeZbGH
++-----END PRIVATE KEY-----
+diff --git a/tests/data/tls/certs/bjensen@mailgw.example.com.crt b/tests/data/tls/certs/bjensen@mailgw.example.com.crt
+new file mode 100644
+index 000000000..93e3a0d39
+--- /dev/null
++++ b/tests/data/tls/certs/bjensen@mailgw.example.com.crt
+@@ -0,0 +1,16 @@
++-----BEGIN CERTIFICATE-----
++MIICejCCAeOgAwIBAgIBADANBgkqhkiG9w0BAQsFADBZMQswCQYDVQQGEwJVUzEL
++MAkGA1UECAwCQ0ExHDAaBgNVBAoME09wZW5MREFQIEZvdW5kYXRpb24xHzAdBgNV
++BAsMFk9wZW5MREFQIFRlc3QgU3VpdGUgQ0EwIBcNMTcwNTEwMjMxNjExWhgPMjUx
++ODA1MjQyMzE2MTFaMIGbMQswCQYDVQQGEwJVUzELMAkGA1UECAwCQ0ExHDAaBgNV
++BAoME09wZW5MREFQIEZvdW5kYXRpb24xETAPBgNVBAsMCE9wZW5MREFQMSMwIQYD
++VQQDDBpiamVuc2VuQG1haWxndy5leGFtcGxlLmNvbTEpMCcGCSqGSIb3DQEJARYa
++YmplbnNlbkBtYWlsZ3cuZXhhbXBsZS5jb20wgZ8wDQYJKoZIhvcNAQEBBQADgY0A
++MIGJAoGBAMjb2C5VL+f/B/f2xJyhsdXeaGhWdABWqJlCiupk7QVPotpZphqJ2fKg
++QbX2w0sPazujt8hG96F2mBv49pHqzhSrKN70EA/E7b8d6ynjJpBU2P9ZgVlttnmU
++U++22BSuhthP5VQK7IqNyI7ZyQ4hFzuqb/XrHD1VCDo/Z/JAkw7jAgMBAAGjDTAL
++MAkGA1UdEwQCMAAwDQYJKoZIhvcNAQELBQADgYEAmAQhIIKqjC13rtAGEQHV/pKn
++wOnLbNOumODqM+0MkEfqXXtR6eNGres2RNAtCJ5fqqDBTQCTqRzIt67cqdlJle2f
++7vXYm8Y6NgxHwG+N1y7S0Xf+oo7/BJ+YJTLF7CLJuPNRqILWvXGlcNDcM1nekeKo
++4DnnYQBDnq48VORVX94=
++-----END CERTIFICATE-----
+diff --git a/tests/data/tls/certs/localhost.crt b/tests/data/tls/certs/localhost.crt
+new file mode 100644
+index 000000000..194cb119d
+--- /dev/null
++++ b/tests/data/tls/certs/localhost.crt
+@@ -0,0 +1,16 @@
++-----BEGIN CERTIFICATE-----
++MIICgzCCAeygAwIBAgIBADANBgkqhkiG9w0BAQsFADBZMQswCQYDVQQGEwJVUzEL
++MAkGA1UECAwCQ0ExHDAaBgNVBAoME09wZW5MREFQIEZvdW5kYXRpb24xHzAdBgNV
++BAsMFk9wZW5MREFQIFRlc3QgU3VpdGUgQ0EwIBcNMTcwNTEwMjMxNjExWhgPMjUx
++ODA1MjQyMzE2MTFaMGoxCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEcMBoGA1UE
++CgwTT3BlbkxEQVAgRm91bmRhdGlvbjEcMBoGA1UECwwTT3BlbkxEQVAgVGVzdCBT
++dWl0ZTESMBAGA1UEAwwJbG9jYWxob3N0MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCB
++iQKBgQDutp3GaZXGSm7joDm1TYI+dhBAuL1+O+oJlmZL10GX/oHqc8WNobvuZGH4
++7H8mQf7zWwJQWxL805oBDMPi2ncgha5ydaVsf4rBZATpweji04vd+672qtR/dGgv
++8Re5G3ZFYWxUv8nb/DJojG601V2Ye/K3rf+Xwa9u4Q9EJqIivwIDAQABo0gwRjAJ
++BgNVHRMEAjAAMAsGA1UdDwQEAwIF4DAsBgNVHREEJTAjgglsb2NhbGhvc3SHBH8A
++AAGHEAAAAAAAAAAAAAAAAAAAAAEwDQYJKoZIhvcNAQELBQADgYEAYItH9TDh/lqG
++8XcBPi0bzGaUPkGlDY615xvsVCflnsfRqLKP/dCfi1GjaDajEmE874pvnmmZfwxl
++0MRTqnhEmFdqjPzVSVKCeNQYWGr3wzKwI7qrhTLMg3Tz98Sz0+HUY8G9fwsNekAR
++GjeZB1FxqDGHjxBq2O828iejw28bSz4=
++-----END CERTIFICATE-----
+diff --git a/tests/data/tls/conf/openssl.cnf b/tests/data/tls/conf/openssl.cnf
+new file mode 100644
+index 000000000..a3c8ad9f6
+--- /dev/null
++++ b/tests/data/tls/conf/openssl.cnf
+@@ -0,0 +1,129 @@
++HOME                    = .
++RANDFILE                = $ENV::HOME/.rnd
++
++oid_section             = new_oids
++
++[ new_oids ]
++tsa_policy1 = 1.2.3.4.1
++tsa_policy2 = 1.2.3.4.5.6
++tsa_policy3 = 1.2.3.4.5.7
++
++[ ca ]
++default_ca      = CA_default            # The default ca section
++
++[ CA_default ]
++
++dir             = ./cruft		# Where everything is kept
++certs           = $dir/certs            # Where the issued certs are kept
++crl_dir         = $dir/crl              # Where the issued crl are kept
++database        = $dir/index.txt        # database index file.
++new_certs_dir   = $dir/certs         # default place for new certs.
++certificate     = $dir/cacert.pem       # The CA certificate
++serial          = $dir/serial           # The current serial number
++crlnumber       = $dir/crlnumber        # the current crl number
++crl             = $dir/crl.pem          # The current CRL
++private_key     = $dir/private/cakey.pem# The private key
++RANDFILE        = $dir/private/.rand    # private random number file
++x509_extensions = usr_cert              # The extentions to add to the cert
++name_opt        = ca_default            # Subject Name options
++cert_opt        = ca_default            # Certificate field options
++default_days    = 365                   # how long to certify for
++default_crl_days= 30                    # how long before next CRL
++default_md      = default               # use public key default MD
++preserve        = no                    # keep passed DN ordering
++policy          = policy_match
++
++[ policy_match ]
++countryName             = match
++stateOrProvinceName     = match
++organizationName        = match
++organizationalUnitName  = optional
++commonName              = supplied
++emailAddress            = optional
++
++[ policy_anything ]
++countryName             = optional
++stateOrProvinceName     = optional
++localityName            = optional
++organizationName        = optional
++organizationalUnitName  = optional
++commonName              = supplied
++emailAddress            = optional
++
++[ req ]
++default_bits            = 2048
++default_keyfile         = privkey.pem
++distinguished_name      = req_distinguished_name
++attributes              = req_attributes
++x509_extensions = v3_ca # The extentions to add to the self signed cert
++
++string_mask = utf8only
++
++[ req_distinguished_name ]
++basicConstraints=CA:FALSE
++
++[ req_attributes ]
++challengePassword               = A challenge password
++challengePassword_min           = 4
++challengePassword_max           = 20
++
++unstructuredName                = An optional company name
++
++[ usr_cert ]
++
++basicConstraints=CA:FALSE
++nsComment                       = "OpenSSL Generated Certificate"
++
++subjectKeyIdentifier=hash
++authorityKeyIdentifier=keyid,issuer
++
++[ v3_req ]
++
++basicConstraints = CA:FALSE
++keyUsage = nonRepudiation, digitalSignature, keyEncipherment
++subjectAltName = DNS:localhost,IP:127.0.0.1,IP:::1
++
++[ v3_ca ]
++subjectKeyIdentifier=hash
++authorityKeyIdentifier=keyid:always,issuer
++basicConstraints = CA:true
++
++[ crl_ext ]
++
++authorityKeyIdentifier=keyid:always
++
++[ proxy_cert_ext ]
++basicConstraints=CA:FALSE
++nsComment                       = "OpenSSL Generated Certificate"
++
++subjectKeyIdentifier=hash
++authorityKeyIdentifier=keyid,issuer
++proxyCertInfo=critical,language:id-ppl-anyLanguage,pathlen:3,policy:foo
++
++[ tsa ]
++
++default_tsa = tsa_config1       # the default TSA section
++
++[ tsa_config1 ]
++
++dir             = ./demoCA              # TSA root directory
++serial          = $dir/tsaserial        # The current serial number (mandatory)
++crypto_device   = builtin               # OpenSSL engine to use for signing
++signer_cert     = $dir/tsacert.pem      # The TSA signing certificate
++                                        # (optional)
++certs           = $dir/cacert.pem       # Certificate chain to include in reply
++                                        # (optional)
++signer_key      = $dir/private/tsakey.pem # The TSA private key (optional)
++
++default_policy  = tsa_policy1           # Policy if request did not specify it
++                                        # (optional)
++other_policies  = tsa_policy2, tsa_policy3      # acceptable policies (optional)
++digests         = md5, sha1             # Acceptable message digests (mandatory)
++accuracy        = secs:1, millisecs:500, microsecs:100  # (optional)
++clock_precision_digits  = 0     # number of digits after dot. (optional)
++ordering                = yes   # Is ordering defined for timestamps?
++                                # (optional, default: no)
++tsa_name                = yes   # Must the TSA name be included in the reply?
++                                # (optional, default: no)
++ess_cert_id_chain       = no    # Must the ESS cert id chain be included?
++                                # (optional, default: no)
+diff --git a/tests/data/tls/create-crt.sh b/tests/data/tls/create-crt.sh
+new file mode 100755
+index 000000000..8c33a24fe
+--- /dev/null
++++ b/tests/data/tls/create-crt.sh
+@@ -0,0 +1,78 @@
++#!/bin/sh
++openssl=$(which openssl)
++
++if [ x"$openssl" = "x" ]; then
++echo "OpenSSL command line binary not found, skipping..."
++fi
++
++USAGE="$0 [-s] [-u <user@domain.com>]"
++SERVER=0
++USER=0
++EMAIL=
++
++while test $# -gt 0 ; do
++	case "$1" in
++		-s | -server)
++			SERVER=1;
++			shift;;
++		-u | -user)
++			if [ x"$2" = "x" ]; then
++				echo "User cert requires an email address as an argument"
++				exit;
++			fi
++			USER=1;
++			EMAIL="$2";
++			shift; shift;;
++		-)
++			shift;;
++		-*)
++			echo "$USAGE"; exit 1
++			;;
++		*)
++			break;;
++	esac
++done
++
++if [ $SERVER = 0 -a $USER = 0 ]; then
++	echo "$USAGE";
++	exit 1;
++fi
++
++rm -rf ./openssl.cnf cruft
++mkdir -p private certs cruft/private cruft/certs
++
++echo "00" > cruft/serial
++touch cruft/index.txt
++touch cruft/index.txt.attr
++hn=$(hostname -f)
++sed -e "s;@HOSTNAME@;$hn;" conf/openssl.cnf >  ./openssl.cnf
++
++if [ $SERVER = 1 ]; then
++	rm -rf private/localhost.key certs/localhost.crt
++
++	$openssl req -new -nodes -out localhost.csr -keyout private/localhost.key \
++		-newkey rsa:1024 -config ./openssl.cnf \
++		-subj "/CN=localhost/OU=OpenLDAP Test Suite/O=OpenLDAP Foundation/ST=CA/C=US" \
++		-batch > /dev/null 2>&1
++
++	$openssl ca -out certs/localhost.crt -notext -config ./openssl.cnf -days 183000 -in localhost.csr \
++		-keyfile ca/private/testsuiteCA.key -extensions v3_req -cert ca/certs/testsuiteCA.crt \
++		-batch >/dev/null 2>&1
++
++	rm -rf ./openssl.cnf ./localhost.csr cruft
++fi
++
++if [ $USER = 1 ]; then
++	rm -f certs/$EMAIL.crt private/$EMAIL.key $EMAIL.csr
++
++	$openssl req -new -nodes -out $EMAIL.csr -keyout private/$EMAIL.key \
++		-newkey rsa:1024 -config ./openssl.cnf \
++		-subj "/emailAddress=$EMAIL/CN=$EMAIL/OU=OpenLDAP/O=OpenLDAP Foundation/ST=CA/C=US" \
++		-batch >/dev/null 2>&1
++
++	$openssl ca -out certs/$EMAIL.crt -notext -config ./openssl.cnf -days 183000 -in $EMAIL.csr \
++		-keyfile ca/private/testsuiteCA.key -extensions req_distinguished_name \
++		-cert ca/certs/testsuiteCA.crt -batch >/dev/null 2>&1
++
++	rm -rf ./openssl.cnf ./$EMAIL.csr cruft
++fi
+diff --git a/tests/data/tls/private/bjensen@mailgw.example.com.key b/tests/data/tls/private/bjensen@mailgw.example.com.key
+new file mode 100644
+index 000000000..5f4625fd7
+--- /dev/null
++++ b/tests/data/tls/private/bjensen@mailgw.example.com.key
+@@ -0,0 +1,16 @@
++-----BEGIN PRIVATE KEY-----
++MIICdQIBADANBgkqhkiG9w0BAQEFAASCAl8wggJbAgEAAoGBAMjb2C5VL+f/B/f2
++xJyhsdXeaGhWdABWqJlCiupk7QVPotpZphqJ2fKgQbX2w0sPazujt8hG96F2mBv4
++9pHqzhSrKN70EA/E7b8d6ynjJpBU2P9ZgVlttnmUU++22BSuhthP5VQK7IqNyI7Z
++yQ4hFzuqb/XrHD1VCDo/Z/JAkw7jAgMBAAECgYEApDgKQadoaZd7nmJlUWJqEV+r
++oVK9uOEhK1zaUtV9bBA2J6uQQLZgORyJXQqJlT7f/3zVb6uGHr7lkkk03wxIu+3e
++nIi7or/Cw6KmxhgslsQamf/ujjeqRlij/4pJIpEYByme9SstfzMBFNWU4t+fguPg
++xXz6lvVZuNiYRWWuXxECQQDwakp31mNczqLPg8fuhdgixz7HCK5g6p4XDw+Cu9Ra
++EenuOJVlnwXdW+g5jooiV5RWhxbTO6ImtgbcBGoeLSbVAkEA1eEcifIzgSi8XODd
++9i6dCSMHKk4FgDRk2DJxRePLK2J1kt2bhOz/N1130fTargDWo8QiQAnd7RBOMJO/
++pGaq1wJAZ2afzrjzlWf+WFgqdmk0k4i0dHBEZ8Sg5/P/TNAyPeb0gRPvFXz2zcUI
++tTCcMrcOQsTpSUKdtB6YBqsTZRUwXQI/FbjHLTtr/7Ijb0tnP5l8WXE1SRajeGHZ
++3BtDZdW8zKszRbc8FEP9p6HWiXxUuVdcdUV2NQrLf0goqMZYsFm9AkBtV3URLS4D
++tw0VPr/TtzDx0UTJU5POdRcNrrpm233A0EyGNmLuM7y0iLxrvCIN9z0RVu7AeMBg
++36Ixj3L+5H18
++-----END PRIVATE KEY-----
+diff --git a/tests/data/tls/private/localhost.key b/tests/data/tls/private/localhost.key
+new file mode 100644
+index 000000000..8a24f69f8
+--- /dev/null
++++ b/tests/data/tls/private/localhost.key
+@@ -0,0 +1,16 @@
++-----BEGIN PRIVATE KEY-----
++MIICdwIBADANBgkqhkiG9w0BAQEFAASCAmEwggJdAgEAAoGBAO62ncZplcZKbuOg
++ObVNgj52EEC4vX476gmWZkvXQZf+gepzxY2hu+5kYfjsfyZB/vNbAlBbEvzTmgEM
++w+LadyCFrnJ1pWx/isFkBOnB6OLTi937rvaq1H90aC/xF7kbdkVhbFS/ydv8MmiM
++brTVXZh78ret/5fBr27hD0QmoiK/AgMBAAECgYEA0gs5tNY/BaWFASGA5bj3u4Ij
++Nu/XPPX3Lsx54o3bl6RIKEYKNF91f4QweNmP39f+P596373jbTe7sOTMkBXu7qnf
++2B51VBJ72Uq92gO2VXImK+uuC6JdZfYTlX1QJkaR6mxhBl3KAgUeGUgbL0Xp9XeJ
++bVcPqDOpRyIlW/80EHECQQD6PWRkk+0H4EMRA3GAnMQv/+Cy+sqF0T0OBNsQ846q
++1hQhJfVvjgj2flmJZpH9zBTaqDn4grJDfQ9cViZwf4k7AkEA9DVNHPNVpkeToWrf
++3yH55Ya5WEAl/6oNsHlaSZ88SHCZGqY7hQrpjSycsEezmsnDeqfdVuO97G2nHC7U
++VdPUTQJAAq8r54RKs53tOj5+NjH4TMeC4oicKYlQDVlx/CGQszZuqthcZKDyaap7
++TWUDReStiJbrYEYOoXiy9HucF/LWRwJAQKeH9f06lN5oaJkKEmJFbg5ALew14z1b
++iHhofgtpg2hEMLkIEw4zjUvdZBJnq7h1R5j/0cxT8S+KybxgPSTrFQJBAPTrj7bP
++5M7tPyQtyFxhFhas6g4ZHz/D2yB7BL+hL3IiJf3fdWNcHTzBDFEgDOVjR/7CZ6L3
++b61hkjQZfbEg5cg=
++-----END PRIVATE KEY-----
+diff --git a/tests/run.in b/tests/run.in
+index 6c33d4d20..793e388c1 100644
+--- a/tests/run.in
++++ b/tests/run.in
+@@ -57,6 +57,7 @@ AC_valsort=valsort@BUILD_VALSORT@
+ # misc
+ AC_WITH_SASL=@WITH_SASL@
+ AC_WITH_TLS=@WITH_TLS@
++AC_TLS_TYPE=@WITH_TLS_TYPE@
+ AC_WITH_MODULES_ENABLED=@WITH_MODULES_ENABLED@
+ AC_ACI_ENABLED=aci@WITH_ACI_ENABLED@
+ AC_THREADS=threads@BUILD_THREAD@
+@@ -75,7 +76,7 @@ export AC_bdb AC_hdb AC_ldap AC_mdb AC_meta AC_monitor AC_null AC_relay AC_sql \
+ 	AC_refint AC_retcode AC_rwm AC_unique AC_syncprov AC_translucent \
+ 	AC_valsort \
+ 	AC_WITH_SASL AC_WITH_TLS AC_WITH_MODULES_ENABLED AC_ACI_ENABLED \
+-	AC_THREADS AC_LIBS_DYNAMIC
++	AC_THREADS AC_LIBS_DYNAMIC AC_WITH_TLS AC_TLS_TYPE
+ 
+ if test ! -x ../servers/slapd/slapd ; then
+ 	echo "Could not locate slapd(8)"
+diff --git a/tests/scripts/defines.sh b/tests/scripts/defines.sh
+index a7dacebdd..2c9e8f76a 100755
+--- a/tests/scripts/defines.sh
++++ b/tests/scripts/defines.sh
+@@ -46,6 +46,9 @@ VALSORT=${AC_valsort-valsortno}
+ # misc
+ WITH_SASL=${AC_WITH_SASL-no}
+ USE_SASL=${SLAPD_USE_SASL-no}
++WITH_TLS=${AC_WITH_TLS-no}
++WITH_TLS_TYPE=${AC_TLS_TYPE-no}
++
+ ACI=${AC_ACI_ENABLED-acino}
+ THREADS=${AC_THREADS-threadsno}
+ SLEEP0=${SLEEP0-1}
+@@ -104,6 +107,8 @@ P2SRSLAVECONF=$DATADIR/slapd-syncrepl-slave-persist2.conf
+ P3SRSLAVECONF=$DATADIR/slapd-syncrepl-slave-persist3.conf
+ REFSLAVECONF=$DATADIR/slapd-ref-slave.conf
+ SCHEMACONF=$DATADIR/slapd-schema.conf
++TLSCONF=$DATADIR/slapd-tls.conf
++TLSSASLCONF=$DATADIR/slapd-tls-sasl.conf
+ GLUECONF=$DATADIR/slapd-glue.conf
+ REFINTCONF=$DATADIR/slapd-refint.conf
+ RETCODECONF=$DATADIR/slapd-retcode.conf
+@@ -164,6 +169,7 @@ SLURPLOG=$TESTDIR/slurp.log
+ CONFIGPWF=$TESTDIR/configpw
+ 
+ # args
++SASLARGS="-Q"
+ TOOLARGS="-x $LDAP_TOOLARGS"
+ TOOLPROTO="-P 3"
+ 
+@@ -186,7 +192,8 @@ BCMP="diff -iB"
+ CMPOUT=/dev/null
+ SLAPD="$TESTWD/../servers/slapd/slapd -s0"
+ LDAPPASSWD="$CLIENTDIR/ldappasswd $TOOLARGS"
+-LDAPSASLSEARCH="$CLIENTDIR/ldapsearch $TOOLPROTO $LDAP_TOOLARGS -LLL"
++LDAPSASLSEARCH="$CLIENTDIR/ldapsearch $SASLARGS $TOOLPROTO $LDAP_TOOLARGS -LLL"
++LDAPSASLWHOAMI="$CLIENTDIR/ldapwhoami $SASLARGS $LDAP_TOOLARGS"
+ LDAPSEARCH="$CLIENTDIR/ldapsearch $TOOLPROTO $TOOLARGS -LLL"
+ LDAPRSEARCH="$CLIENTDIR/ldapsearch $TOOLPROTO $TOOLARGS"
+ LDAPDELETE="$CLIENTDIR/ldapdelete $TOOLPROTO $TOOLARGS"
+@@ -201,6 +208,7 @@ LDIFFILTER=$PROGDIR/ldif-filter
+ SLAPDMTREAD=$PROGDIR/slapd-mtread
+ LVL=${SLAPD_DEBUG-0x4105}
+ LOCALHOST=localhost
++LOCALIP=127.0.0.1
+ BASEPORT=${SLAPD_BASEPORT-9010}
+ PORT1=`expr $BASEPORT + 1`
+ PORT2=`expr $BASEPORT + 2`
+@@ -209,11 +217,22 @@ PORT4=`expr $BASEPORT + 4`
+ PORT5=`expr $BASEPORT + 5`
+ PORT6=`expr $BASEPORT + 6`
+ URI1="ldap://${LOCALHOST}:$PORT1/"
++URIP1="ldap://${LOCALIP}:$PORT1/"
+ URI2="ldap://${LOCALHOST}:$PORT2/"
++URIP2="ldap://${LOCALIP}:$PORT2/"
+ URI3="ldap://${LOCALHOST}:$PORT3/"
++URIP3="ldap://${LOCALIP}:$PORT3/"
+ URI4="ldap://${LOCALHOST}:$PORT4/"
+ URI5="ldap://${LOCALHOST}:$PORT5/"
+ URI6="ldap://${LOCALHOST}:$PORT6/"
++SURI1="ldaps://${LOCALHOST}:$PORT1/"
++SURIP1="ldaps://${LOCALIP}:$PORT1/"
++SURI2="ldaps://${LOCALHOST}:$PORT2/"
++SURIP2="ldaps://${LOCALIP}:$PORT2/"
++SURI3="ldaps://${LOCALHOST}:$PORT3/"
++SURI4="ldaps://${LOCALHOST}:$PORT4/"
++SURI5="ldaps://${LOCALHOST}:$PORT5/"
++SURI6="ldaps://${LOCALHOST}:$PORT6/"
+ 
+ # LDIF
+ LDIF=$DATADIR/test.ldif
+diff --git a/tests/scripts/test067-tls b/tests/scripts/test067-tls
+new file mode 100755
+index 000000000..2b245f5f5
+--- /dev/null
++++ b/tests/scripts/test067-tls
+@@ -0,0 +1,140 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++echo "running defines.sh"
++. $SRCDIR/scripts/defines.sh
++
++if test $WITH_TLS = no ; then
++        echo "TLS support not available, test skipped"
++        exit 0
++fi
++
++mkdir -p $TESTDIR $DBDIR1
++cp -r $DATADIR/tls $TESTDIR
++
++cd $TESTWD
++
++echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
++. $CONFFILTER $BACKEND $MONITORDB < $TLSCONF > $CONF1
++$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++PID=$!
++if test $WAIT != 0 ; then
++    echo PID $PID
++    read foo
++fi
++KILLPIDS="$PID"
++
++sleep 1
++
++for i in 0 1 2 3 4 5; do
++	$LDAPSEARCH -s base -b "" -H $URI1 \
++		'objectclass=*' > /dev/null 2>&1
++        RC=$?
++        if test $RC = 0 ; then
++                break
++        fi
++        echo "Waiting 5 seconds for slapd to start..."
++        sleep 5
++done
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo -n "Using ldapsearch with startTLS with no server cert validation...."
++$LDAPSEARCH -o tls_reqcert=never -ZZ -b "" -s base -H $URIP1 \
++	'@extensibleObject' > $SEARCHOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapsearch (startTLS) failed ($RC)!"
++	exit $RC
++else
++	echo "success"
++fi
++
++echo -n "Using ldapsearch with startTLS with hard require cert...."
++$LDAPSEARCH -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -o tls_reqcert=hard -ZZ -b "" -s base -H $URIP1 \
++	'@extensibleObject' > $SEARCHOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapsearch (startTLS) failed ($RC)!"
++	exit $RC
++else
++	echo "success"
++fi
++
++if test $WITH_TLS_TYPE = openssl ; then
++	echo -n "Using ldapsearch with startTLS and specific protocol version...."
++	$LDAPSEARCH -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -o tls_reqcert=hard -o tls_protocol_min=3.3 -ZZ -b "" -s base -H $URIP1 \
++		'@extensibleObject' > $SEARCHOUT 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "ldapsearch (protocol-min) failed ($RC)!"
++		exit $RC
++	else
++		echo "success"
++	fi
++fi
++
++echo -n "Using ldapsearch on $SURI2 with no server cert validation..."
++$LDAPSEARCH -o tls_reqcert=never -b "cn=Subschema" -s base -H $SURIP2 \
++	'(&(objectClasses=top)(objectClasses=2.5.6.0))' cn objectClass \
++	>> $SEARCHOUT  2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapsearch (ldaps) failed($RC)!"
++	exit $RC
++else
++	echo "success"
++fi
++
++echo -n "Using ldapsearch on $SURI2 with reqcert HARD and no CA cert.  Should fail..."
++$LDAPSEARCH -o tls_reqcert=hard -b "cn=Subschema" -s base -H $SURIP2 \
++	'(&(objectClasses=top)(objectClasses=2.5.6.0))' cn objectClass \
++	>> $SEARCHOUT  2>&1
++RC=$?
++if test $RC = 0 ; then
++	echo "ldapsearch (ldaps) succeeded when it should have failed($RC)!"
++	exit 1
++else
++	echo "failed correctly with error code ($RC)"
++fi
++
++echo -n "Using ldapsearch on $SURI2 with CA cert and reqcert HARD..."
++$LDAPSEARCH -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -o tls_reqcert=hard -b "cn=Subschema" -s base -H $SURIP2 \
++	'(&(objectClasses=top)(objectClasses=2.5.6.0))' cn objectClass \
++	>> $SEARCHOUT  2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapsearch (ldaps) failed ($RC)!"
++	exit $RC
++else
++	echo "success"
++fi
++
++test $KILLSERVERS != no && kill -HUP $KILLPIDS
++
++if test $RC != 0 ; then
++	echo ">>>>> Test failed"
++else
++	echo ">>>>> Test succeeded"
++	RC=0
++fi
++
++test $KILLSERVERS != no && wait
++
++exit $RC
+diff --git a/tests/scripts/test068-sasl-tls-external b/tests/scripts/test068-sasl-tls-external
+new file mode 100755
+index 000000000..dcbc50fd4
+--- /dev/null
++++ b/tests/scripts/test068-sasl-tls-external
+@@ -0,0 +1,102 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++echo "running defines.sh"
++. $SRCDIR/scripts/defines.sh
++
++if test $WITH_TLS = no ; then
++        echo "TLS support not available, test skipped"
++        exit 0
++fi
++
++mkdir -p $TESTDIR $DBDIR1
++cp -r $DATADIR/tls $TESTDIR
++
++cd $TESTWD
++
++echo "Running slapadd to build slapd database..."
++. $CONFFILTER $BACKEND $MONITORDB < $TLSSASLCONF > $CONF1
++$SLAPADD -f $CONF1 -l $LDIFORDERED
++RC=$?
++if test $RC != 0 ; then
++        echo "slapadd failed ($RC)!"
++        exit $RC
++fi
++
++echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
++$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++PID=$!
++if test $WAIT != 0 ; then
++    echo PID $PID
++    read foo
++fi
++KILLPIDS="$PID"
++
++sleep 1
++
++for i in 0 1 2 3 4 5; do
++	$LDAPSEARCH -s base -b "" -H $URI1 \
++		'objectclass=*' > /dev/null 2>&1
++        RC=$?
++        if test $RC = 0 ; then
++                break
++        fi
++        echo "Waiting 5 seconds for slapd to start..."
++        sleep 5
++done
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo -n "Using ldapwhoami with SASL/EXTERNAL...."
++$LDAPSASLWHOAMI -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -o tls_reqcert=hard \
++	-o tls_cert=$TESTDIR/tls/certs/bjensen@mailgw.example.com.crt -o tls_key=$TESTDIR/tls/private/bjensen@mailgw.example.com.key -ZZ -Y EXTERNAL -H $URIP1 \
++	> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapwhoami (startTLS) failed ($RC)!"
++	exit $RC
++else
++	echo "success"
++fi
++
++echo -n "Validating mapped SASL ID..."
++echo 'dn:cn=barbara jensen,ou=information technology division,ou=people,dc=example,dc=com' > $TESTDIR/dn.out
++$CMP $TESTDIR/dn.out $TESTOUT > $CMPOUT
++
++RC=$?
++if test $RC != 0 ; then
++	echo "Comparison failed"
++	test $KILLSERVERS != no && kill -HUP $PID
++	exit $RC
++else
++	echo "success"
++fi
++
++test $KILLSERVERS != no && kill -HUP $KILLPIDS
++
++if test $RC != 0 ; then
++	echo ">>>>> Test failed"
++else
++	echo ">>>>> Test succeeded"
++	RC=0
++fi
++
++test $KILLSERVERS != no && wait
++
++exit $RC
+diff --git a/tests/scripts/test069-delta-multimaster-starttls b/tests/scripts/test069-delta-multimaster-starttls
+new file mode 100755
+index 000000000..2dfbb30a1
+--- /dev/null
++++ b/tests/scripts/test069-delta-multimaster-starttls
+@@ -0,0 +1,574 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++echo "running defines.sh"
++. $SRCDIR/scripts/defines.sh
++
++if test $WITH_TLS = no ; then
++        echo "TLS support not available, test skipped"
++        exit 0
++fi
++
++if test $SYNCPROV = syncprovno; then
++	echo "Syncrepl provider overlay not available, test skipped"
++	exit 0
++fi
++if test $ACCESSLOG = accesslogno; then
++	echo "Accesslog overlay not available, test skipped"
++	exit 0
++fi
++
++MMR=2
++
++XDIR=$TESTDIR/srv
++TMP=$TESTDIR/tmp
++
++mkdir -p $TESTDIR
++cp -r $DATADIR/tls $TESTDIR
++
++$SLAPPASSWD -g -n >$CONFIGPWF
++
++if test x"$SYNCMODE" = x ; then
++	SYNCMODE=rp
++fi
++case "$SYNCMODE" in
++	ro)
++		SYNCTYPE="type=refreshOnly interval=00:00:00:03"
++		;;
++	rp)
++		SYNCTYPE="type=refreshAndPersist interval=00:00:00:03"
++		;;
++	*)
++		echo "unknown sync mode $SYNCMODE"
++		exit 1;
++		;;
++esac
++
++#
++# Test delta-sync mmr
++# - start servers
++# - configure over ldap
++# - populate over ldap
++# - configure syncrepl over ldap
++# - break replication
++# - modify each server separately
++# - restore replication
++# - compare results
++#
++
++nullExclude=""
++test $BACKEND = null && nullExclude="# "
++
++KILLPIDS=
++
++echo "Initializing server configurations..."
++n=1
++while [ $n -le $MMR ]; do
++
++DBDIR=${XDIR}$n/db
++CFDIR=${XDIR}$n/slapd.d
++
++mkdir -p ${XDIR}$n $DBDIR.1 $DBDIR.2 $CFDIR
++
++o=`expr 3 - $n`
++cat > $TMP <<EOF
++dn: cn=config
++objectClass: olcGlobal
++cn: config
++olcServerID: $n
++olcTLSCertificateFile: $TESTDIR/tls/certs/localhost.crt
++olcTLSCertificateKeyFile: $TESTDIR/tls/private/localhost.key
++
++EOF
++
++if [ "$SYNCPROV" = syncprovmod -o "$ACCESSLOG" = accesslogmod ]; then
++  cat <<EOF >> $TMP
++dn: cn=module,cn=config
++objectClass: olcModuleList
++cn: module
++olcModulePath: $TESTWD/../servers/slapd/overlays
++EOF
++  if [ "$SYNCPROV" = syncprovmod ]; then
++  echo "olcModuleLoad: syncprov.la" >> $TMP
++  fi
++  if [ "$ACCESSLOG" = accesslogmod ]; then
++  echo "olcModuleLoad: accesslog.la" >> $TMP
++  fi
++  echo "" >> $TMP
++fi
++
++if [ "$BACKENDTYPE" = mod ]; then
++cat <<EOF >> $TMP
++dn: cn=module,cn=config
++objectClass: olcModuleList
++cn: module
++olcModulePath: $TESTWD/../servers/slapd/back-$BACKEND
++olcModuleLoad: back_$BACKEND.la
++
++EOF
++fi
++MYURI=`eval echo '$URI'$n`
++PROVIDERURI=`eval echo '$URIP'$o`
++if test $INDEXDB = indexdb ; then
++INDEX1="olcDbIndex: objectClass,entryCSN,reqStart,reqDN,reqResult eq"
++INDEX2="olcDbIndex: objectClass,entryCSN,entryUUID eq"
++else
++INDEX1=
++INDEX2=
++fi
++cat >> $TMP <<EOF
++dn: cn=schema,cn=config
++objectclass: olcSchemaconfig
++cn: schema
++
++include: file://$ABS_SCHEMADIR/core.ldif
++
++include: file://$ABS_SCHEMADIR/cosine.ldif
++
++include: file://$ABS_SCHEMADIR/inetorgperson.ldif
++
++include: file://$ABS_SCHEMADIR/openldap.ldif
++
++include: file://$ABS_SCHEMADIR/nis.ldif
++
++dn: olcDatabase={0}config,cn=config
++objectClass: olcDatabaseConfig
++olcDatabase: {0}config
++olcRootPW:< file://$CONFIGPWF
++
++dn: olcDatabase={1}$BACKEND,cn=config
++objectClass: olcDatabaseConfig
++${nullExclude}objectClass: olc${BACKEND}Config
++olcDatabase: {1}$BACKEND
++olcSuffix: cn=log
++${nullExclude}olcDbDirectory: ${DBDIR}.1
++olcRootDN: $MANAGERDN
++$INDEX1
++
++dn: olcOverlay=syncprov,olcDatabase={1}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcSyncProvConfig
++olcOverlay: syncprov
++olcSpNoPresent: TRUE
++olcSpReloadHint: TRUE
++
++dn: olcDatabase={2}$BACKEND,cn=config
++objectClass: olcDatabaseConfig
++${nullExclude}objectClass: olc${BACKEND}Config
++olcDatabase: {2}$BACKEND
++olcSuffix: $BASEDN
++${nullExclude}olcDbDirectory: ${DBDIR}.2
++olcRootDN: $MANAGERDN
++olcRootPW: $PASSWD
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=$PASSWD searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++  starttls=critical
++olcMirrorMode: TRUE
++$INDEX2
++
++dn: olcOverlay=syncprov,olcDatabase={2}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcSyncProvConfig
++olcOverlay: syncprov
++
++dn: olcOverlay=accesslog,olcDatabase={2}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcAccessLogConfig
++olcOverlay: accesslog
++olcAccessLogDB: cn=log
++olcAccessLogOps: writes
++olcAccessLogSuccess: TRUE
++
++EOF
++$SLAPADD -F $CFDIR -n 0  -d-1< $TMP > $TESTOUT 2>&1
++PORT=`eval echo '$PORT'$n`
++echo "Starting server $n on TCP/IP port $PORT..."
++cd ${XDIR}${n}
++LOG=`eval echo '$LOG'$n`
++$SLAPD -F slapd.d -h $MYURI -d $LVL $TIMING > $LOG 2>&1 &
++PID=$!
++if test $WAIT != 0 ; then
++    echo PID $PID
++    read foo
++fi
++KILLPIDS="$PID $KILLPIDS"
++cd $TESTWD
++
++echo "Using ldapsearch to check that server $n is running..."
++for i in 0 1 2 3 4 5; do
++	$LDAPSEARCH -s base -b "" -H $MYURI \
++		'objectclass=*' > /dev/null 2>&1
++	RC=$?
++	if test $RC = 0 ; then
++		break
++	fi
++	echo "Waiting 5 seconds for slapd to start..."
++	sleep 5
++done
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++if [ $n = 1 ]; then
++echo "Using ldapadd for context on server 1..."
++$LDAPADD -D "$MANAGERDN" -H $URI1 -w $PASSWD -f $LDIFORDEREDCP \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server $n database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++fi
++
++n=`expr $n + 1`
++done
++
++echo "Using ldapadd to populate server 1..."
++$LDAPADD -D "$MANAGERDN" -H $URI1 -w $PASSWD -f $LDIFORDEREDNOCP \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server $n database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++sleep $SLEEP1
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldap://${LOCALHOST}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -S "" -b "$BASEDN" -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++echo "Using ldapadd to populate server 2..."
++$LDAPADD -D "$MANAGERDN" -H $URI2 -w $PASSWD -f $LDIFADD1 \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++THEDN="cn=James A Jones 2,ou=Alumni Association,ou=People,dc=example,dc=com"
++sleep 1
++for i in 1 2 3; do
++	$LDAPSEARCH -S "" -b "$THEDN" -H $URI1 \
++		-s base '(objectClass=*)' entryCSN > "${MASTEROUT}.$i" 2>&1
++	RC=$?
++
++	if test $RC = 0 ; then
++		break
++	fi
++
++	if test $RC != 32 ; then
++		echo "ldapsearch failed at slave ($RC)!"
++		test $KILLSERVERS != no && kill -HUP $KILLPIDS
++		exit $RC
++	fi
++
++	echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++	sleep $SLEEP1
++done
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldap://${LOCALHOST}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -S "" -b "$BASEDN" -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++echo "Breaking replication between server 1 and 2..."
++n=1
++while [ $n -le $MMR ]; do
++o=`expr 3 - $n`
++MYURI=`eval echo '$URI'$n`
++PROVIDERURI=`eval echo '$URIP'$o`
++$LDAPMODIFY -D cn=config -H $MYURI -y $CONFIGPWF > $TESTOUT 2>&1 <<EOF
++dn: olcDatabase={2}$BACKEND,cn=config
++changetype: modify
++replace: olcSyncRepl
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=InvalidPw searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++  starttls=critical
++-
++replace: olcMirrorMode
++olcMirrorMode: TRUE
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server $n config ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++n=`expr $n + 1`
++done
++
++echo "Using ldapmodify to force conflicts between server 1 and 2..."
++$LDAPMODIFY -D "$MANAGERDN" -H $URI1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: description
++description: Amazing
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: description
++description: Stupendous
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++delete: description
++description: Outstanding
++-
++add: description
++description: Mindboggling
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++delete: description
++description: OutStanding
++-
++add: description
++description: Bizarre
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: carLicense
++carLicense: 123-XYZ
++-
++add: employeeNumber
++employeeNumber: 32
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: employeeType
++employeeType: deadwood
++-
++add: employeeNumber
++employeeNumber: 64
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -D "$MANAGERDN" -H $URI1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++replace: sn
++sn: Replaced later
++-
++replace: sn
++sn: Surname
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo "Restoring replication between server 1 and 2..."
++n=1
++while [ $n -le $MMR ]; do
++o=`expr 3 - $n`
++MYURI=`eval echo '$URI'$n`
++PROVIDERURI=`eval echo '$URIP'$o`
++$LDAPMODIFY -D cn=config -H $MYURI -y $CONFIGPWF > $TESTOUT 2>&1 <<EOF
++dn: olcDatabase={2}$BACKEND,cn=config
++changetype: modify
++replace: olcSyncRepl
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=$PASSWD searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++  starttls=critical
++-
++replace: olcMirrorMode
++olcMirrorMode: TRUE
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server $n config ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++n=`expr $n + 1`
++done
++
++echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++sleep $SLEEP1
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldap://${LOCALHOST}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -S "" -b "$BASEDN" -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER -s a < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++test $KILLSERVERS != no && kill -HUP $KILLPIDS
++
++echo ">>>>> Test succeeded"
++
++test $KILLSERVERS != no && wait
++
++exit 0
+diff --git a/tests/scripts/test070-delta-multimaster-ldaps b/tests/scripts/test070-delta-multimaster-ldaps
+new file mode 100755
+index 000000000..1024640ef
+--- /dev/null
++++ b/tests/scripts/test070-delta-multimaster-ldaps
+@@ -0,0 +1,571 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2017 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++echo "running defines.sh"
++. $SRCDIR/scripts/defines.sh
++
++if test $WITH_TLS = no ; then
++        echo "TLS support not available, test skipped"
++        exit 0
++fi
++
++if test $SYNCPROV = syncprovno; then
++	echo "Syncrepl provider overlay not available, test skipped"
++	exit 0
++fi
++if test $ACCESSLOG = accesslogno; then
++	echo "Accesslog overlay not available, test skipped"
++	exit 0
++fi
++
++MMR=2
++
++XDIR=$TESTDIR/srv
++TMP=$TESTDIR/tmp
++
++mkdir -p $TESTDIR
++cp -r $DATADIR/tls $TESTDIR
++
++$SLAPPASSWD -g -n >$CONFIGPWF
++
++if test x"$SYNCMODE" = x ; then
++	SYNCMODE=rp
++fi
++case "$SYNCMODE" in
++	ro)
++		SYNCTYPE="type=refreshOnly interval=00:00:00:03"
++		;;
++	rp)
++		SYNCTYPE="type=refreshAndPersist interval=00:00:00:03"
++		;;
++	*)
++		echo "unknown sync mode $SYNCMODE"
++		exit 1;
++		;;
++esac
++
++#
++# Test delta-sync mmr
++# - start servers
++# - configure over ldap
++# - populate over ldap
++# - configure syncrepl over ldap
++# - break replication
++# - modify each server separately
++# - restore replication
++# - compare results
++#
++
++nullExclude=""
++test $BACKEND = null && nullExclude="# "
++
++KILLPIDS=
++
++echo "Initializing server configurations..."
++n=1
++while [ $n -le $MMR ]; do
++
++DBDIR=${XDIR}$n/db
++CFDIR=${XDIR}$n/slapd.d
++
++mkdir -p ${XDIR}$n $DBDIR.1 $DBDIR.2 $CFDIR
++
++o=`expr 3 - $n`
++cat > $TMP <<EOF
++dn: cn=config
++objectClass: olcGlobal
++cn: config
++olcServerID: $n
++olcTLSCertificateFile: $TESTDIR/tls/certs/localhost.crt
++olcTLSCertificateKeyFile: $TESTDIR/tls/private/localhost.key
++
++EOF
++
++if [ "$SYNCPROV" = syncprovmod -o "$ACCESSLOG" = accesslogmod ]; then
++  cat <<EOF >> $TMP
++dn: cn=module,cn=config
++objectClass: olcModuleList
++cn: module
++olcModulePath: $TESTWD/../servers/slapd/overlays
++EOF
++  if [ "$SYNCPROV" = syncprovmod ]; then
++  echo "olcModuleLoad: syncprov.la" >> $TMP
++  fi
++  if [ "$ACCESSLOG" = accesslogmod ]; then
++  echo "olcModuleLoad: accesslog.la" >> $TMP
++  fi
++  echo "" >> $TMP
++fi
++
++if [ "$BACKENDTYPE" = mod ]; then
++cat <<EOF >> $TMP
++dn: cn=module,cn=config
++objectClass: olcModuleList
++cn: module
++olcModulePath: $TESTWD/../servers/slapd/back-$BACKEND
++olcModuleLoad: back_$BACKEND.la
++
++EOF
++fi
++MYURI=`eval echo '$SURIP'$n`
++PROVIDERURI=`eval echo '$SURIP'$o`
++if test $INDEXDB = indexdb ; then
++INDEX1="olcDbIndex: objectClass,entryCSN,reqStart,reqDN,reqResult eq"
++INDEX2="olcDbIndex: objectClass,entryCSN,entryUUID eq"
++else
++INDEX1=
++INDEX2=
++fi
++cat >> $TMP <<EOF
++dn: cn=schema,cn=config
++objectclass: olcSchemaconfig
++cn: schema
++
++include: file://$ABS_SCHEMADIR/core.ldif
++
++include: file://$ABS_SCHEMADIR/cosine.ldif
++
++include: file://$ABS_SCHEMADIR/inetorgperson.ldif
++
++include: file://$ABS_SCHEMADIR/openldap.ldif
++
++include: file://$ABS_SCHEMADIR/nis.ldif
++
++dn: olcDatabase={0}config,cn=config
++objectClass: olcDatabaseConfig
++olcDatabase: {0}config
++olcRootPW:< file://$CONFIGPWF
++
++dn: olcDatabase={1}$BACKEND,cn=config
++objectClass: olcDatabaseConfig
++${nullExclude}objectClass: olc${BACKEND}Config
++olcDatabase: {1}$BACKEND
++olcSuffix: cn=log
++${nullExclude}olcDbDirectory: ${DBDIR}.1
++olcRootDN: $MANAGERDN
++$INDEX1
++
++dn: olcOverlay=syncprov,olcDatabase={1}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcSyncProvConfig
++olcOverlay: syncprov
++olcSpNoPresent: TRUE
++olcSpReloadHint: TRUE
++
++dn: olcDatabase={2}$BACKEND,cn=config
++objectClass: olcDatabaseConfig
++${nullExclude}objectClass: olc${BACKEND}Config
++olcDatabase: {2}$BACKEND
++olcSuffix: $BASEDN
++${nullExclude}olcDbDirectory: ${DBDIR}.2
++olcRootDN: $MANAGERDN
++olcRootPW: $PASSWD
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=$PASSWD searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++olcMirrorMode: TRUE
++$INDEX2
++
++dn: olcOverlay=syncprov,olcDatabase={2}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcSyncProvConfig
++olcOverlay: syncprov
++
++dn: olcOverlay=accesslog,olcDatabase={2}$BACKEND,cn=config
++objectClass: olcOverlayConfig
++objectClass: olcAccessLogConfig
++olcOverlay: accesslog
++olcAccessLogDB: cn=log
++olcAccessLogOps: writes
++olcAccessLogSuccess: TRUE
++
++EOF
++$SLAPADD -F $CFDIR -n 0  -d-1< $TMP > $TESTOUT 2>&1
++PORT=`eval echo '$PORT'$n`
++echo "Starting server $n on TCP/IP port $PORT..."
++cd ${XDIR}${n}
++LOG=`eval echo '$LOG'$n`
++$SLAPD -F slapd.d -h $MYURI -d $LVL $TIMING > $LOG 2>&1 &
++PID=$!
++if test $WAIT != 0 ; then
++    echo PID $PID
++    read foo
++fi
++KILLPIDS="$PID $KILLPIDS"
++cd $TESTWD
++
++echo "Using ldapsearch to check that server $n is running..."
++for i in 0 1 2 3 4 5; do
++	$LDAPSEARCH -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -s base -b "" -H $MYURI \
++		'objectclass=*' > /dev/null 2>&1
++	RC=$?
++	if test $RC = 0 ; then
++		break
++	fi
++	echo "Waiting 5 seconds for slapd to start..."
++	sleep 5
++done
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++if [ $n = 1 ]; then
++echo "Using ldapadd for context on server 1..."
++$LDAPADD -D "$MANAGERDN" -H $SURIP1 -w $PASSWD -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -f $LDIFORDEREDCP \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server $n database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++fi
++
++n=`expr $n + 1`
++done
++
++echo "Using ldapadd to populate server 1..."
++$LDAPADD -D "$MANAGERDN" -H $SURIP1 -w $PASSWD -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -f $LDIFORDEREDNOCP \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server $n database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++sleep $SLEEP1
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldaps://${LOCALIP}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -S "" -b "$BASEDN" -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++echo "Using ldapadd to populate server 2..."
++$LDAPADD -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP2 -w $PASSWD -f $LDIFADD1 \
++	>> $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapadd failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++THEDN="cn=James A Jones 2,ou=Alumni Association,ou=People,dc=example,dc=com"
++sleep 1
++for i in 1 2 3; do
++	$LDAPSEARCH -S "" -b "$THEDN" -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -H $SURIP1 \
++		-s base '(objectClass=*)' entryCSN > "${MASTEROUT}.$i" 2>&1
++	RC=$?
++
++	if test $RC = 0 ; then
++		break
++	fi
++
++	if test $RC != 32 ; then
++		echo "ldapsearch failed at slave ($RC)!"
++		test $KILLSERVERS != no && kill -HUP $KILLPIDS
++		exit $RC
++	fi
++
++	echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++	sleep $SLEEP1
++done
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldaps://${LOCALIP}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -S "" -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -b "$BASEDN" -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++echo "Breaking replication between server 1 and 2..."
++n=1
++while [ $n -le $MMR ]; do
++o=`expr 3 - $n`
++MYURI=`eval echo '$SURIP'$n`
++PROVIDERURI=`eval echo '$SURIP'$o`
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D cn=config -H $MYURI -y $CONFIGPWF > $TESTOUT 2>&1 <<EOF
++dn: olcDatabase={2}$BACKEND,cn=config
++changetype: modify
++replace: olcSyncRepl
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=InvalidPw searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++-
++replace: olcMirrorMode
++olcMirrorMode: TRUE
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server $n config ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++n=`expr $n + 1`
++done
++
++echo "Using ldapmodify to force conflicts between server 1 and 2..."
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: description
++description: Amazing
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: description
++description: Stupendous
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++delete: description
++description: Outstanding
++-
++add: description
++description: Mindboggling
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++delete: description
++description: OutStanding
++-
++add: description
++description: Bizarre
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: carLicense
++carLicense: 123-XYZ
++-
++add: employeeNumber
++employeeNumber: 32
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP2 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++add: employeeType
++employeeType: deadwood
++-
++add: employeeNumber
++employeeNumber: 64
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 2 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPMODIFY -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -D "$MANAGERDN" -H $SURIP1 -w $PASSWD \
++	>> $TESTOUT 2>&1 << EOF
++dn: $THEDN
++changetype: modify
++replace: sn
++sn: Replaced later
++-
++replace: sn
++sn: Surname
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server 1 database ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo "Restoring replication between server 1 and 2..."
++n=1
++while [ $n -le $MMR ]; do
++o=`expr 3 - $n`
++MYURI=`eval echo '$SURIP'$n`
++PROVIDERURI=`eval echo '$SURIP'$o`
++$LDAPMODIFY -D cn=config -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -H $MYURI -y $CONFIGPWF > $TESTOUT 2>&1 <<EOF
++dn: olcDatabase={2}$BACKEND,cn=config
++changetype: modify
++replace: olcSyncRepl
++olcSyncRepl: rid=001 provider=$PROVIDERURI binddn="$MANAGERDN" bindmethod=simple
++  credentials=$PASSWD searchbase="$BASEDN" $SYNCTYPE
++  retry="3 +" timeout=3 logbase="cn=log"
++  logfilter="(&(objectclass=auditWriteObject)(reqresult=0))"
++  syncdata=accesslog tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt
++-
++replace: olcMirrorMode
++olcMirrorMode: TRUE
++
++EOF
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapmodify failed for server $n config ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++n=`expr $n + 1`
++done
++
++echo "Waiting $SLEEP1 seconds for syncrepl to receive changes..."
++sleep $SLEEP1
++
++n=1
++while [ $n -le $MMR ]; do
++PORT=`expr $BASEPORT + $n`
++URI="ldaps://${LOCALIP}:$PORT/"
++
++echo "Using ldapsearch to read all the entries from server $n..."
++$LDAPSEARCH -o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt -S "" -b "$BASEDN" -D "$MANAGERDN" -H $URI -w $PASSWD  \
++	'objectclass=*' > $TESTDIR/server$n.out 2>&1
++RC=$?
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed at server $n ($RC)!"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++$LDIFFILTER -s a < $TESTDIR/server$n.out > $TESTDIR/server$n.flt
++n=`expr $n + 1`
++done
++
++n=2
++while [ $n -le $MMR ]; do
++echo "Comparing retrieved entries from server 1 and server $n..."
++$CMP $MASTERFLT $TESTDIR/server$n.flt > $CMPOUT
++
++if test $? != 0 ; then
++	echo "test failed - server 1 and server $n databases differ"
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit 1
++fi
++n=`expr $n + 1`
++done
++
++test $KILLSERVERS != no && kill -HUP $KILLPIDS
++
++echo ">>>>> Test succeeded"
++
++test $KILLSERVERS != no && wait
++
++exit 0
+-- 
+2.26.2
+

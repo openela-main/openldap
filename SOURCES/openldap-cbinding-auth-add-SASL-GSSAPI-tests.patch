@@ -1,0 +1,487 @@
+From 8e3e85e329f5cbd989936b0df8a0ac06906a4824 Mon Sep 17 00:00:00 2001
+From: Isaac Boukris <iboukris@gmail.com>
+Date: Tue, 14 Apr 2020 16:19:05 +0300
+Subject: [PATCH] auth: add SASL/GSSAPI tests
+
+---
+ tests/data/krb5.conf              |  32 ++++++
+ tests/data/slapd-sasl-gssapi.conf |  65 ++++++++++++
+ tests/scripts/conf.sh             |   3 +
+ tests/scripts/defines.sh          |   5 +
+ tests/scripts/setup_kdc.sh        | 144 +++++++++++++++++++++++++++
+ tests/scripts/test077-sasl-gssapi | 159 ++++++++++++++++++++++++++++++
+ 6 files changed, 408 insertions(+)
+ create mode 100644 tests/data/krb5.conf
+ create mode 100644 tests/data/slapd-sasl-gssapi.conf
+ create mode 100755 tests/scripts/setup_kdc.sh
+ create mode 100755 tests/scripts/test077-sasl-gssapi
+
+diff --git a/tests/data/krb5.conf b/tests/data/krb5.conf
+new file mode 100644
+index 000000000..739113742
+--- /dev/null
++++ b/tests/data/krb5.conf
+@@ -0,0 +1,32 @@
++[libdefaults]
++  default_realm = @KRB5REALM@
++  dns_lookup_realm = false
++  dns_lookup_kdc = false
++  default_ccache_name = FILE://@TESTDIR@/ccache
++  #udp_preference_limit = 1
++[realms]
++ @KRB5REALM@ = {
++  kdc = @KDCHOST@:@KDCPORT@
++  acl_file = @TESTDIR@/kadm.acl
++  database_name = @TESTDIR@/kdc.db
++  key_stash_file = @TESTDIR@/kdc.stash
++ }
++[kdcdefaults]
++  kdc_ports = @KDCPORT@
++  kdc_tcp_ports = @KDCPORT@
++[logging]
++  kdc = FILE:@TESTDIR@/kdc.log
++  admin_server = FILE:@TESTDIR@/kadm.log
++  default = FILE:@TESTDIR@/krb5.log
++
++#Heimdal
++[kdc]
++ database = {
++  dbname = @TESTDIR@/kdc.db
++  realm = @KRB5REALM@
++  mkey_file = @TESTDIR@/kdc.stash
++  log_file = @TESTDIR@/kdc.log
++  acl_file = @TESTDIR@/kadm.acl
++ }
++[hdb]
++  db-dir = @TESTDIR@
+diff --git a/tests/data/slapd-sasl-gssapi.conf b/tests/data/slapd-sasl-gssapi.conf
+new file mode 100644
+index 000000000..611fc7097
+--- /dev/null
++++ b/tests/data/slapd-sasl-gssapi.conf
+@@ -0,0 +1,65 @@
++# stand-alone slapd config -- for testing (with indexing)
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2020 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++#
++include		@SCHEMADIR@/core.schema
++include		@SCHEMADIR@/cosine.schema
++#
++include		@SCHEMADIR@/corba.schema
++include		@SCHEMADIR@/java.schema
++include		@SCHEMADIR@/inetorgperson.schema
++include		@SCHEMADIR@/misc.schema
++include		@SCHEMADIR@/nis.schema
++include		@SCHEMADIR@/openldap.schema
++#
++include		@SCHEMADIR@/duaconf.schema
++include		@SCHEMADIR@/dyngroup.schema
++
++#
++pidfile		@TESTDIR@/slapd.1.pid
++argsfile	@TESTDIR@/slapd.1.args
++
++# SSL configuration
++TLSCACertificateFile @TESTDIR@/tls/ca/certs/testsuiteCA.crt
++TLSCertificateKeyFile @TESTDIR@/tls/private/localhost.key
++TLSCertificateFile @TESTDIR@/tls/certs/localhost.crt
++
++#
++rootdse 	@DATADIR@/rootdse.ldif
++
++#mod#modulepath	../servers/slapd/back-@BACKEND@/
++#mod#moduleload	back_@BACKEND@.la
++#monitormod#modulepath ../servers/slapd/back-monitor/
++#monitormod#moduleload back_monitor.la
++
++
++#######################################################################
++# database definitions
++#######################################################################
++
++database	@BACKEND@
++suffix          "dc=example,dc=com"
++rootdn          "cn=Manager,dc=example,dc=com"
++rootpw          secret
++#~null~#directory	@TESTDIR@/db.1.a
++#indexdb#index		objectClass eq
++#indexdb#index		mail eq
++#ndb#dbname db_1_a
++#ndb#include @DATADIR@/ndb.conf
++
++#monitor#database	monitor
++
++sasl-realm	@KRB5REALM@
++sasl-host	localhost
+diff --git a/tests/scripts/conf.sh b/tests/scripts/conf.sh
+index b0393865d..c9e1a4b0a 100755
+--- a/tests/scripts/conf.sh
++++ b/tests/scripts/conf.sh
+@@ -99,4 +99,7 @@ sed -e "s/@BACKEND@/${BACKEND}/"			\
+ 	-e "s;@TESTWD@;${TESTWD};"			\
+ 	-e "s;@DATADIR@;${DATADIR};"			\
+ 	-e "s;@SCHEMADIR@;${SCHEMADIR};"		\
++	-e "s;@KRB5REALM@;${KRB5REALM};"		\
++	-e "s;@KDCHOST@;${KDCHOST};"			\
++	-e "s;@KDCPORT@;${KDCPORT};"			\
+ 	-e "/^#/d"
+diff --git a/tests/scripts/defines.sh b/tests/scripts/defines.sh
+index 1d6c2b3f1..ccb2e5b41 100755
+--- a/tests/scripts/defines.sh
++++ b/tests/scripts/defines.sh
+@@ -114,6 +114,7 @@ REFSLAVECONF=$DATADIR/slapd-ref-slave.conf
+ SCHEMACONF=$DATADIR/slapd-schema.conf
+ TLSCONF=$DATADIR/slapd-tls.conf
+ TLSSASLCONF=$DATADIR/slapd-tls-sasl.conf
++SASLGSSAPICONF=$DATADIR/slapd-sasl-gssapi.conf
+ GLUECONF=$DATADIR/slapd-glue.conf
+ REFINTCONF=$DATADIR/slapd-refint.conf
+ RETCODECONF=$DATADIR/slapd-retcode.conf
+@@ -223,6 +224,7 @@ PORT3=`expr $BASEPORT + 3`
+ PORT4=`expr $BASEPORT + 4`
+ PORT5=`expr $BASEPORT + 5`
+ PORT6=`expr $BASEPORT + 6`
++KDCPORT=`expr $BASEPORT + 7`
+ URI1="ldap://${LOCALHOST}:$PORT1/"
+ URIP1="ldap://${LOCALIP}:$PORT1/"
+ URI2="ldap://${LOCALHOST}:$PORT2/"
+@@ -248,6 +250,9 @@ SURIP5="ldaps://${LOCALIP}:$PORT5/"
+ SURI6="ldaps://${LOCALHOST}:$PORT6/"
+ SURIP6="ldaps://${LOCALIP}:$PORT6/"
+ 
++KRB5REALM="K5.REALM"
++KDCHOST=$LOCALHOST
++
+ # LDIF
+ LDIF=$DATADIR/test.ldif
+ LDIFADD1=$DATADIR/do_add.1
+diff --git a/tests/scripts/setup_kdc.sh b/tests/scripts/setup_kdc.sh
+new file mode 100755
+index 000000000..1cb784075
+--- /dev/null
++++ b/tests/scripts/setup_kdc.sh
+@@ -0,0 +1,144 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2020 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++export KRB5_TRACE=$TESTDIR/k5_trace
++export KRB5_CONFIG=$TESTDIR/krb5.conf
++export KRB5_KDC_PROFILE=$KRB5_CONFIG
++export KRB5_KTNAME=$TESTDIR/server.kt
++export KRB5_CLIENT_KTNAME=$TESTDIR/client.kt
++export KRB5CCNAME=$TESTDIR/client.ccache
++
++KDCLOG=$TESTDIR/setup_kdc.log
++KSERVICE=ldap/$LOCALHOST
++KUSER=kuser
++
++. $CONFFILTER < $DATADIR/krb5.conf > $KRB5_CONFIG
++
++PATH=${PATH}:/usr/lib/heimdal-servers:/usr/sbin:/usr/local/sbin
++
++echo "Trying Heimdal KDC..."
++
++kdc --version 2>&1 | grep Heimdal > $KDCLOG 2>&1
++RC=$?
++if test $RC = 0 ; then
++
++	kstash --random-key > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kstash failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	flags="--realm-max-ticket-life=1h --realm-max-renewable-life=1h"
++	kadmin -l init $flags $KRB5REALM > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kadmin init failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin -l add --random-key --use-defaults $KSERVICE > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kadmin add failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin -l ext -k $KRB5_KTNAME $KSERVICE > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kadmin ext failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin -l add --random-key --use-defaults $KUSER > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kadmin add failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin -l ext -k $KRB5_CLIENT_KTNAME $KUSER > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "Heimdal: kadmin ext failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kdc --addresses=$LOCALIP --ports="$KDCPORT/udp" > $KDCLOG 2>&1 &
++else
++	echo "Trying MIT KDC..."
++
++	kdb5_util create -r $KRB5REALM -s -P password > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "MIT: kdb5_util create failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin.local -q "addprinc -randkey $KSERVICE" > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "MIT: admin addprinc failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin.local -q "ktadd -k $KRB5_KTNAME $KSERVICE" > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "MIT: kadmin ktadd failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin.local -q "addprinc -randkey $KUSER" > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "MIT: kadmin addprinc failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	kadmin.local -q "ktadd -k $KRB5_CLIENT_KTNAME $KUSER" > $KDCLOG 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "MIT: kadmin ktadd failed, skipping GSSAPI tests"
++		exit 0
++	fi
++
++	krb5kdc -n > $KDCLOG 2>&1 &
++fi
++
++KDCPROC=$!
++sleep 1
++
++kinit -kt $KRB5_CLIENT_KTNAME $KUSER > $KDCLOG 2>&1
++RC=$?
++if test $RC != 0 ; then
++	kill $KDCPROC
++	echo "SASL/GSSAPI: kinit failed, skipping GSSAPI tests"
++	exit 0
++fi
++
++pluginviewer -m GSSAPI > $TESTDIR/plugin_out 2>/dev/null
++RC=$?
++if test $RC != 0 ; then
++
++	saslpluginviewer -m GSSAPI > $TESTDIR/plugin_out 2>/dev/null
++	RC=$?
++	if test $RC != 0 ; then
++		kill $KDCPROC
++		echo "cyrus-sasl has no GSSAPI support, test skipped"
++		exit 0
++	fi
++fi
+diff --git a/tests/scripts/test077-sasl-gssapi b/tests/scripts/test077-sasl-gssapi
+new file mode 100755
+index 000000000..64abe16fe
+--- /dev/null
++++ b/tests/scripts/test077-sasl-gssapi
+@@ -0,0 +1,159 @@
++#! /bin/sh
++# $OpenLDAP$
++## This work is part of OpenLDAP Software <http://www.openldap.org/>.
++##
++## Copyright 1998-2020 The OpenLDAP Foundation.
++## All rights reserved.
++##
++## Redistribution and use in source and binary forms, with or without
++## modification, are permitted only as authorized by the OpenLDAP
++## Public License.
++##
++## A copy of this license is available in the file LICENSE in the
++## top-level directory of the distribution or, alternatively, at
++## <http://www.OpenLDAP.org/license.html>.
++
++echo "running defines.sh"
++. $SRCDIR/scripts/defines.sh
++
++if test $WITH_SASL = no ; then
++        echo "SASL support not available, test skipped"
++        exit 0
++fi
++
++mkdir -p $TESTDIR $DBDIR1
++cp -r $DATADIR/tls $TESTDIR
++
++cd $TESTWD
++
++
++echo "Starting KDC for SASL/GSSAPI tests..."
++. $SRCDIR/scripts/setup_kdc.sh
++
++echo "Running slapadd to build slapd database..."
++. $CONFFILTER $BACKEND $MONITORDB < $SASLGSSAPICONF > $CONF1
++$SLAPADD -f $CONF1 -l $LDIFORDERED
++RC=$?
++if test $RC != 0 ; then
++	echo "slapadd failed ($RC)!"
++	kill $KDCPROC
++	exit $RC
++fi
++
++echo "Starting ldap:/// slapd on TCP/IP port $PORT1 and ldaps:/// slapd on $PORT2..."
++$SLAPD -f $CONF1 -h "$URI1 $SURI2" -d $LVL $TIMING > $LOG1 2>&1 &
++PID=$!
++if test $WAIT != 0 ; then
++    echo PID $PID
++    read foo
++fi
++KILLPIDS="$PID"
++
++sleep 1
++
++for i in 0 1 2 3 4 5; do
++	$LDAPSEARCH -s base -b "" -H $URI1 \
++		'objectclass=*' > /dev/null 2>&1
++        RC=$?
++        if test $RC = 0 ; then
++                break
++        fi
++        echo "Waiting 5 seconds for slapd to start..."
++        sleep 5
++done
++
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	kill $KDCPROC
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++$LDAPSEARCH -x -H $URI1 -s "base" -b "" supportedSASLMechanisms > $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapsearch failed ($RC)!"
++	kill $KDCPROC
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++grep GSSAPI $TESTOUT
++RC=$?
++if test $RC != 0 ; then
++	echo "failed: GSSAPI mechanism not in supportedSASLMechanisms."
++	kill $KDCPROC
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++fi
++
++echo -n "Using ldapwhoami with SASL/GSSAPI: "
++$LDAPSASLWHOAMI -N -Y GSSAPI -H $URI1 > $TESTOUT 2>&1
++RC=$?
++if test $RC != 0 ; then
++	echo "ldapwhoami failed ($RC)!"
++	kill $KDCPROC
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++else
++	echo "success"
++fi
++
++echo -n "Validating mapped SASL/GSSAPI ID: "
++echo "dn:uid=$KUSER,cn=$KRB5REALM,cn=gssapi,cn=auth" > $TESTDIR/dn.out
++$CMP $TESTDIR/dn.out $TESTOUT > $CMPOUT
++RC=$?
++if test $RC != 0 ; then
++	echo "Comparison failed"
++	kill $KDCPROC
++	test $KILLSERVERS != no && kill -HUP $KILLPIDS
++	exit $RC
++else
++	echo "success"
++fi
++
++if test $WITH_TLS = no ; then
++        echo "SASL/GSSAPI: TLS support not available, skipping TLS part."
++else
++	echo -n "Using ldapwhoami with SASL/GSSAPI with start-tls: "
++	$LDAPSASLWHOAMI -N -Y GSSAPI -H $URI1 -ZZ -o tls_reqcert=allow	\
++		-o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt	\
++		> $TESTOUT 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "ldapwhoami failed ($RC)!"
++		kill $KDCPROC
++		test $KILLSERVERS != no && kill -HUP $KILLPIDS
++		exit $RC
++	else
++		echo "success"
++	fi
++
++	echo -n "Using ldapwhoami with SASL/GSSAPI with ldaps: "
++	$LDAPSASLWHOAMI -N -Y GSSAPI -H $SURI2 -o tls_reqcert=allow	\
++		-o tls_cacert=$TESTDIR/tls/ca/certs/testsuiteCA.crt	\
++		> $TESTOUT 2>&1
++	RC=$?
++	if test $RC != 0 ; then
++		echo "ldapwhoami failed ($RC)!"
++		kill $KDCPROC
++		test $KILLSERVERS != no && kill -HUP $KILLPIDS
++		exit $RC
++	else
++		echo "success"
++	fi
++fi
++
++kill $KDCPROC
++test $KILLSERVERS != no && kill -HUP $KILLPIDS
++
++if test $RC != 0 ; then
++	echo ">>>>> Test failed"
++else
++	echo ">>>>> Test succeeded"
++	RC=0
++fi
++
++test $KILLSERVERS != no && wait
++
++exit $RC
+-- 
+2.26.2
+

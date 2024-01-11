@@ -1,0 +1,631 @@
+NOTE: The patch has been adjusted to match the base code before backporting.
+
+From 3cd50fa8b32a21040a9892e2a8a7a9dfc7541ce6 Mon Sep 17 00:00:00 2001
+From: Isaac Boukris <iboukris@gmail.com>
+Date: Tue, 14 Apr 2020 16:10:48 +0300
+Subject: [PATCH] ITS#9189 rework sasl-cbinding support
+
+Add LDAP_OPT_X_SASL_CBINDING option to define the binding type to use,
+defaults to "none".
+
+Add "tls-endpoint" binding type implementing "tls-server-end-point" from
+RCF 5929, which is compatible with Windows.
+
+Fix "tls-unique" to include the prefix in the bindings as per RFC 5056.
+---
+ doc/man/man3/ldap_get_option.3 |  16 +++++
+ doc/man/man5/ldap.conf.5       |   3 +
+ doc/man/man5/slapd-config.5    |   4 ++
+ doc/man/man5/slapd.conf.5      |   3 +
+ include/ldap.h                 |   5 ++
+ include/ldap_pvt.h             |   5 ++
+ libraries/libldap/cyrus.c      | 103 ++++++++++++++++++++++++++++-----
+ libraries/libldap/init.c       |   1 +
+ libraries/libldap/ldap-int.h   |   1 +
+ libraries/libldap/ldap-tls.h   |   2 +
+ libraries/libldap/tls2.c       |   7 +++
+ libraries/libldap/tls_g.c      |  59 +++++++++++++++++++
+ libraries/libldap/tls_o.c      |  45 ++++++++++++++
+ servers/slapd/bconfig.c        |  11 +++-
+ servers/slapd/config.c         |   1 +
+ servers/slapd/connection.c     |   9 +--
+ servers/slapd/proto-slap.h     |   4 +-
+ servers/slapd/sasl.c           |  27 ++++++---
+ 18 files changed, 274 insertions(+), 32 deletions(-)
+
+diff --git a/doc/man/man3/ldap_get_option.3 b/doc/man/man3/ldap_get_option.3
+index 4f03a01a3..fd1b3c91c 100644
+--- a/doc/man/man3/ldap_get_option.3
++++ b/doc/man/man3/ldap_get_option.3
+@@ -563,6 +563,22 @@ must be a
+ .BR "char **" .
+ Its content needs to be freed by the caller using
+ .BR ldap_memfree (3).
++.B LDAP_OPT_X_SASL_CBINDING
++Sets/gets the channel-binding type to use in SASL,
++one of
++.BR LDAP_OPT_X_SASL_CBINDING_NONE
++(the default),
++.BR LDAP_OPT_X_SASL_CBINDING_TLS_UNIQUE
++the "tls-unique" type from RCF 5929.
++.BR LDAP_OPT_X_SASL_CBINDING_TLS_ENDPOINT
++the "tls-server-end-point" from RCF 5929, compatible with Windows.
++.BR invalue
++must be
++.BR "const int *" ;
++.BR outvalue
++must be
++.BR "int *" .
++.TP
+ .SH TCP OPTIONS
+ The TCP options are OpenLDAP specific.
+ Mainly intended for use with Linux, they may not be portable.
+diff --git a/doc/man/man5/ldap.conf.5 b/doc/man/man5/ldap.conf.5
+index 65ad40c1b..4974f8340 100644
+--- a/doc/man/man5/ldap.conf.5
++++ b/doc/man/man5/ldap.conf.5
+@@ -286,6 +286,9 @@ size allowed.  0 disables security layers.  The default is 65536.
+ .TP
+ .B SASL_NOCANON <on/true/yes/off/false/no>
+ Do not perform reverse DNS lookups to canonicalize SASL host names. The default is off.
++.TP
++.B SASL_CBINDING <none/tls-unique/tls-endpoint>
++The channel-binding type to use, see also LDAP_OPT_X_SASL_CBINDING. The default is none.
+ .SH GSSAPI OPTIONS
+ If OpenLDAP is built with Generic Security Services Application Programming Interface support,
+ there are more options you can specify.
+diff --git a/doc/man/man5/slapd-config.5 b/doc/man/man5/slapd-config.5
+index 18518a186..dc0ab769f 100644
+--- a/doc/man/man5/slapd-config.5
++++ b/doc/man/man5/slapd-config.5
+@@ -720,6 +720,10 @@ Used to specify the fully qualified domain name used for SASL processing.
+ .B olcSaslRealm: <realm>
+ Specify SASL realm.  Default is empty.
+ .TP
++.B olcSaslCbinding: none | tls-unique | tls-endpoint
++Specify the channel-binding type, see also LDAP_OPT_X_SASL_CBINDING.
++Default is none.
++.TP
+ .B olcSaslSecProps: <properties>
+ Used to specify Cyrus SASL security properties.
+ The
+diff --git a/doc/man/man5/slapd.conf.5 b/doc/man/man5/slapd.conf.5
+index f2094b7fd..73a151a70 100644
+--- a/doc/man/man5/slapd.conf.5
++++ b/doc/man/man5/slapd.conf.5
+@@ -914,6 +914,9 @@ The
+ property specifies the maximum security layer receive buffer
+ size allowed.  0 disables security layers.  The default is 65536.
+ .TP
++.B sasl\-cbinding none | tls-unique | tls-endpoint
++Specify the channel-binding type, see also LDAP_OPT_X_SASL_CBINDING.
++.TP
+ .B schemadn <dn>
+ Specify the distinguished name for the subschema subentry that
+ controls the entries on this server.  The default is "cn=Subschema".
+diff --git a/include/ldap.h b/include/ldap.h
+index 7b4fc9d64..9d5679ae8 100644
+--- a/include/ldap.h
++++ b/include/ldap.h
+@@ -186,6 +186,10 @@ LDAP_BEGIN_DECL
+ #define LDAP_OPT_X_TLS_PROTOCOL_TLS1_1		((3 << 8) + 2)
+ #define LDAP_OPT_X_TLS_PROTOCOL_TLS1_2		((3 << 8) + 3)
+ 
++#define LDAP_OPT_X_SASL_CBINDING_NONE		0
++#define LDAP_OPT_X_SASL_CBINDING_TLS_UNIQUE	1
++#define LDAP_OPT_X_SASL_CBINDING_TLS_ENDPOINT	2
++
+ /* OpenLDAP SASL options */
+ #define LDAP_OPT_X_SASL_MECH			0x6100
+ #define LDAP_OPT_X_SASL_REALM			0x6101
+@@ -201,6 +205,7 @@ LDAP_BEGIN_DECL
+ #define LDAP_OPT_X_SASL_NOCANON			0x610b
+ #define LDAP_OPT_X_SASL_USERNAME		0x610c /* read-only */
+ #define LDAP_OPT_X_SASL_GSS_CREDS		0x610d
++#define LDAP_OPT_X_SASL_CBINDING		0x610e
+ 
+ /* OpenLDAP GSSAPI options */
+ #define LDAP_OPT_X_GSSAPI_DO_NOT_FREE_CONTEXT      0x6200
+diff --git a/include/ldap_pvt.h b/include/ldap_pvt.h
+index 783d280a5..01220d00a 100644
+--- a/include/ldap_pvt.h
++++ b/include/ldap_pvt.h
+@@ -262,6 +262,10 @@ LDAP_F (void *) ldap_pvt_sasl_mutex_new LDAP_P((void));
+ LDAP_F (int) ldap_pvt_sasl_mutex_lock LDAP_P((void *mutex));
+ LDAP_F (int) ldap_pvt_sasl_mutex_unlock LDAP_P((void *mutex));
+ LDAP_F (void) ldap_pvt_sasl_mutex_dispose LDAP_P((void *mutex));
++
++LDAP_F (int) ldap_pvt_sasl_cbinding_parse LDAP_P(( const char *arg ));
++LDAP_F (void *) ldap_pvt_sasl_cbinding LDAP_P(( void *ssl, int type,
++					        int is_server ));
+ #endif /* HAVE_CYRUS_SASL */
+ 
+ struct sockbuf; /* avoid pulling in <lber.h> */
+@@ -438,6 +442,7 @@ LDAP_F (int) ldap_pvt_tls_get_peer_dn LDAP_P(( void *ctx, struct berval *dn,
+ 	LDAPDN_rewrite_dummy *func, unsigned flags ));
+ LDAP_F (int) ldap_pvt_tls_get_strength LDAP_P(( void *ctx ));
+ LDAP_F (int) ldap_pvt_tls_get_unique LDAP_P(( void *ctx, struct berval *buf, int is_server ));
++LDAP_F (int) ldap_pvt_tls_get_endpoint LDAP_P(( void *ctx, struct berval *buf, int is_server ));
+ 
+ LDAP_END_DECL
+ 
+diff --git a/libraries/libldap/cyrus.c b/libraries/libldap/cyrus.c
+index beb1cf4a0..4d4d5b3e3 100644
+--- a/libraries/libldap/cyrus.c
++++ b/libraries/libldap/cyrus.c
+@@ -372,6 +372,65 @@ int ldap_int_sasl_close( LDAP *ld, LDAPConn *lc )
+ 	return LDAP_SUCCESS;
+ }
+ 
++int ldap_pvt_sasl_cbinding_parse( const char *arg )
++{
++	int i = -1;
++
++	if ( strcasecmp(arg, "none") == 0 )
++		i = LDAP_OPT_X_SASL_CBINDING_NONE;
++	else if ( strcasecmp(arg, "tls-unique") == 0 )
++		i = LDAP_OPT_X_SASL_CBINDING_TLS_UNIQUE;
++	else if ( strcasecmp(arg, "tls-endpoint") == 0 )
++		i = LDAP_OPT_X_SASL_CBINDING_TLS_ENDPOINT;
++
++	return i;
++}
++
++void *ldap_pvt_sasl_cbinding( void *ssl, int type, int is_server )
++{
++#if defined(SASL_CHANNEL_BINDING) && defined(HAVE_TLS)
++	char unique_prefix[] = "tls-unique:";
++	char endpoint_prefix[] = "tls-server-end-point:";
++	char cbinding[ 64 ];
++	struct berval cbv = { 64, cbinding };
++	void *cb_data; /* used since cb->data is const* */
++	sasl_channel_binding_t *cb;
++	char *prefix;
++	int plen;
++
++	switch (type) {
++	case LDAP_OPT_X_SASL_CBINDING_NONE:
++		return NULL;
++	case LDAP_OPT_X_SASL_CBINDING_TLS_UNIQUE:
++		if ( !ldap_pvt_tls_get_unique( ssl, &cbv, is_server ))
++			return NULL;
++		prefix = unique_prefix;
++		plen = sizeof(unique_prefix) -1;
++		break;
++	case LDAP_OPT_X_SASL_CBINDING_TLS_ENDPOINT:
++		if ( !ldap_pvt_tls_get_endpoint( ssl, &cbv, is_server ))
++			return NULL;
++		prefix = endpoint_prefix;
++		plen = sizeof(endpoint_prefix) -1;
++		break;
++	default:
++		return NULL;
++	}
++
++	cb = ldap_memalloc( sizeof(*cb) + plen + cbv.bv_len );
++	cb->len = plen + cbv.bv_len;
++	cb->data = cb_data = cb+1;
++	memcpy( cb_data, prefix, plen );
++	memcpy( cb_data + plen, cbv.bv_val, cbv.bv_len );
++	cb->name = "ldap";
++	cb->critical = 0;
++
++	return cb;
++#else
++	return NULL;
++#endif
++}
++
+ int
+ ldap_int_sasl_bind(
+ 	LDAP			*ld,
+@@ -497,17 +556,12 @@ ldap_int_sasl_bind(
+ 			(void) ldap_int_sasl_external( ld, ld->ld_defconn, authid.bv_val, fac );
+ 			LDAP_FREE( authid.bv_val );
+ #ifdef SASL_CHANNEL_BINDING	/* 2.1.25+ */
+-			{
+-				char cbinding[64];
+-				struct berval cbv = { sizeof(cbinding), cbinding };
+-				if ( ldap_pvt_tls_get_unique( ssl, &cbv, 0 )) {
+-					sasl_channel_binding_t *cb = ldap_memalloc( sizeof(*cb) +
+-						cbv.bv_len);
+-					cb->name = "ldap";
+-					cb->critical = 0;
+-					cb->data = (char *)(cb+1);
+-					cb->len = cbv.bv_len;
+-					memcpy( cb->data, cbv.bv_val, cbv.bv_len );
++			if ( ld->ld_defconn->lconn_sasl_cbind == NULL ) {
++				void *cb;
++				cb = ldap_pvt_sasl_cbinding( ssl,
++							     ld->ld_options.ldo_sasl_cbinding,
++							     0 );
++				if ( cb != NULL ) {
+ 					sasl_setprop( ld->ld_defconn->lconn_sasl_authctx,
+ 						SASL_CHANNEL_BINDING, cb );
+ 					ld->ld_defconn->lconn_sasl_cbind = cb;
+@@ -931,12 +983,20 @@ int ldap_pvt_sasl_secprops(
+ int
+ ldap_int_sasl_config( struct ldapoptions *lo, int option, const char *arg )
+ {
+-	int rc;
++	int rc, i;
+ 
+ 	switch( option ) {
+ 	case LDAP_OPT_X_SASL_SECPROPS:
+ 		rc = ldap_pvt_sasl_secprops( arg, &lo->ldo_sasl_secprops );
+ 		if( rc == LDAP_SUCCESS ) return 0;
++		break;
++	case LDAP_OPT_X_SASL_CBINDING:
++		i = ldap_pvt_sasl_cbinding_parse( arg );
++		if ( i >= 0 ) {
++			lo->ldo_sasl_cbinding = i;
++			return 0;
++		}
++		break;
+ 	}
+ 
+ 	return -1;
+@@ -1042,6 +1102,10 @@ ldap_int_sasl_get_option( LDAP *ld, int option, void *arg )
+ 			/* this option is write only */
+ 			return -1;
+ 
++		case LDAP_OPT_X_SASL_CBINDING:
++			*(int *)arg = ld->ld_options.ldo_sasl_cbinding;
++			break;
++
+ #ifdef SASL_GSS_CREDS
+ 		case LDAP_OPT_X_SASL_GSS_CREDS: {
+ 			sasl_conn_t *ctx;
+@@ -1143,6 +1207,17 @@ ldap_int_sasl_set_option( LDAP *ld, int option, void *arg )
+ 		return sc == LDAP_SUCCESS ? 0 : -1;
+ 		}
+ 
++	case LDAP_OPT_X_SASL_CBINDING:
++		if ( !arg ) return -1;
++		switch( *(int *) arg ) {
++		case LDAP_OPT_X_SASL_CBINDING_NONE:
++		case LDAP_OPT_X_SASL_CBINDING_TLS_UNIQUE:
++		case LDAP_OPT_X_SASL_CBINDING_TLS_ENDPOINT:
++			ld->ld_options.ldo_sasl_cbinding = *(int *) arg;
++			return 0;
++		}
++		return -1;
++
+ #ifdef SASL_GSS_CREDS
+ 	case LDAP_OPT_X_SASL_GSS_CREDS: {
+ 		sasl_conn_t *ctx;
+diff --git a/libraries/libldap/init.c b/libraries/libldap/init.c
+index 3468ee249..dfe1ea9da 100644
+--- a/libraries/libldap/init.c
++++ b/libraries/libldap/init.c
+@@ -110,6 +110,7 @@ static const struct ol_attribute {
+ 		offsetof(struct ldapoptions, ldo_def_sasl_authzid)},
+ 	{0, ATTR_SASL,		"SASL_SECPROPS",	NULL,	LDAP_OPT_X_SASL_SECPROPS},
+ 	{0, ATTR_BOOL,		"SASL_NOCANON",	NULL,	LDAP_BOOL_SASL_NOCANON},
++	{0, ATTR_SASL,		"SASL_CBINDING",	NULL,	LDAP_OPT_X_SASL_CBINDING},
+ #endif
+ 
+ #ifdef HAVE_GSSAPI
+diff --git a/libraries/libldap/ldap-int.h b/libraries/libldap/ldap-int.h
+index 67e8bd6da..c6c6891a9 100644
+--- a/libraries/libldap/ldap-int.h
++++ b/libraries/libldap/ldap-int.h
+@@ -300,6 +300,7 @@ struct ldapoptions {
+ 
+ 	/* SASL Security Properties */
+ 	struct sasl_security_properties	ldo_sasl_secprops;
++	int ldo_sasl_cbinding;
+ #define LDAP_LDO_SASL_NULLARG ,0,0,0,0,{0}
+ #else
+ #define LDAP_LDO_SASL_NULLARG
+diff --git a/libraries/libldap/ldap-tls.h b/libraries/libldap/ldap-tls.h
+index efd51aaa2..9f01ddda1 100644
+--- a/libraries/libldap/ldap-tls.h
++++ b/libraries/libldap/ldap-tls.h
+@@ -42,6 +42,7 @@ typedef int (TI_session_dn)(tls_session *sess, struct berval *dn);
+ typedef int (TI_session_chkhost)(LDAP *ld, tls_session *s, const char *name_in);
+ typedef int (TI_session_strength)(tls_session *sess);
+ typedef int (TI_session_unique)(tls_session *sess, struct berval *buf, int is_server);
++typedef int (TI_session_endpoint)(tls_session *sess, struct berval *buf, int is_server);
+ typedef int (TI_session_peercert)(tls_session *s, struct berval *der);
+
+ typedef void (TI_thr_init)(void);
+@@ -69,6 +70,7 @@ typedef struct tls_impl {
+ 	TI_session_chkhost *ti_session_chkhost;
+ 	TI_session_strength *ti_session_strength;
+ 	TI_session_unique *ti_session_unique;
++	TI_session_endpoint *ti_session_endpoint;
+ 	TI_session_peercert *ti_session_peercert;
+ 
+ 	Sockbuf_IO *ti_sbio;
+diff --git a/libraries/libldap/tls2.c b/libraries/libldap/tls2.c
+index 79a651a38..72827a1a3 100644
+--- a/libraries/libldap/tls2.c
++++ b/libraries/libldap/tls2.c
+@@ -1200,6 +1200,13 @@ ldap_pvt_tls_get_unique( void *s, struct berval *buf, int is_server )
+ 	return tls_imp->ti_session_unique( session, buf, is_server );
+ }
+ 
++int
++ldap_pvt_tls_get_endpoint( void *s, struct berval *buf, int is_server )
++{
++	tls_session *session = s;
++	return tls_imp->ti_session_endpoint( session, buf, is_server );
++}
++
+ int
+ ldap_pvt_tls_get_peercert( void *s, struct berval *der )
+ {
+diff --git a/libraries/libldap/tls_g.c b/libraries/libldap/tls_g.c
+index 956a9ec90..ef0f44e20 100644
+--- a/libraries/libldap/tls_g.c
++++ b/libraries/libldap/tls_g.c
+@@ -729,6 +729,64 @@ tlsg_session_unique( tls_session *sess, struct berval *buf, int is_server)
+ 	return 0;
+ }
+ 
++static int
++tlsg_session_endpoint( tls_session *sess, struct berval *buf, int is_server )
++{
++	tlsg_session *s = (tlsg_session *)sess;
++	const gnutls_datum_t *cert_data;
++	gnutls_x509_crt_t server_cert;
++	gnutls_digest_algorithm_t md;
++	int sign_algo, md_len, rc;
++
++	if ( is_server )
++		cert_data = gnutls_certificate_get_ours( s->session );
++	else
++		cert_data = gnutls_certificate_get_peers( s->session, NULL );
++
++	if ( cert_data == NULL )
++		return 0;
++
++	rc = gnutls_x509_crt_init( &server_cert );
++	if ( rc != GNUTLS_E_SUCCESS )
++		return 0;
++
++	rc = gnutls_x509_crt_import( server_cert, cert_data, GNUTLS_X509_FMT_DER );
++	if ( rc != GNUTLS_E_SUCCESS ) {
++		gnutls_x509_crt_deinit( server_cert );
++		return 0;
++	}
++
++	sign_algo = gnutls_x509_crt_get_signature_algorithm( server_cert );
++	gnutls_x509_crt_deinit( server_cert );
++	if ( sign_algo <= GNUTLS_SIGN_UNKNOWN )
++		return 0;
++
++	md = gnutls_sign_get_hash_algorithm( sign_algo );
++	if ( md == GNUTLS_DIG_UNKNOWN )
++		return 0;
++
++	/* See RFC 5929 */
++	switch (md) {
++	case GNUTLS_DIG_NULL:
++	case GNUTLS_DIG_MD2:
++	case GNUTLS_DIG_MD5:
++	case GNUTLS_DIG_SHA1:
++		md = GNUTLS_DIG_SHA256;
++	}
++
++	md_len = gnutls_hash_get_len( md );
++	if ( md_len == 0 || md_len > buf->bv_len )
++		return 0;
++
++	rc = gnutls_hash_fast( md, cert_data->data, cert_data->size, buf->bv_val );
++	if ( rc != GNUTLS_E_SUCCESS )
++		return 0;
++
++	buf->bv_len = md_len;
++
++	return md_len;
++}
++
+ static int
+ tlsg_session_peercert( tls_session *sess, struct berval *der )
+ {
+@@ -1117,6 +1175,7 @@ tls_impl ldap_int_tls_impl = {
+ 	tlsg_session_chkhost,
+ 	tlsg_session_strength,
+ 	tlsg_session_unique,
++	tlsg_session_endpoint,
+ 	tlsg_session_peercert,
+ 
+ 	&tlsg_sbio,
+diff --git a/libraries/libldap/tls_o.c b/libraries/libldap/tls_o.c
+index cf97d7632..aa855d77a 100644
+--- a/libraries/libldap/tls_o.c
++++ b/libraries/libldap/tls_o.c
+@@ -858,6 +858,50 @@ tlso_session_unique( tls_session *sess, struct berval *buf, int is_server)
+ 	return buf->bv_len;
+ }
+ 
++static int
++tlso_session_endpoint( tls_session *sess, struct berval *buf, int is_server )
++{
++	tlso_session *s = (tlso_session *)sess;
++	const EVP_MD *md;
++	unsigned int md_len;
++	X509 *cert;
++
++	if ( buf->bv_len < EVP_MAX_MD_SIZE )
++		return 0;
++
++	if ( is_server )
++		cert = SSL_get_certificate( s );
++	else
++		cert = SSL_get_peer_certificate( s );
++
++	if ( cert == NULL )
++		return 0;
++
++#if OPENSSL_VERSION_NUMBER >= 0x10100000
++	md = EVP_get_digestbynid( X509_get_signature_nid( cert ));
++#else
++	md = EVP_get_digestbynid(OBJ_obj2nid( cert->sig_alg->algorithm ));
++#endif
++
++	/* See RFC 5929 */
++	if ( md == NULL ||
++	     md == EVP_md_null() ||
++#ifndef OPENSSL_NO_MD2
++	     md == EVP_md2() ||
++#endif
++	     md == EVP_md4() ||
++	     md == EVP_md5() ||
++	     md == EVP_sha1() )
++		md = EVP_sha256();
++
++	if ( !X509_digest( cert, md, buf->bv_val, &md_len ))
++		return 0;
++
++	buf->bv_len = md_len;
++
++	return md_len;
++}
++
+ static int
+ tlso_session_peercert( tls_session *sess, struct berval *der )
+ {
+@@ -1474,6 +1518,7 @@ tls_impl ldap_int_tls_impl = {
+ 	tlso_session_chkhost,
+ 	tlso_session_strength,
+ 	tlso_session_unique,
++	tlso_session_endpoint,
+ 	tlso_session_peercert,
+ 
+ 	&tlso_sbio,
+diff --git a/servers/slapd/bconfig.c b/servers/slapd/bconfig.c
+index 6069ee203..4c90715be 100644
+--- a/servers/slapd/bconfig.c
++++ b/servers/slapd/bconfig.c
+@@ -630,6 +630,15 @@ static ConfigTable config_back_cf_table[] = {
+ #endif
+ 		"( OLcfgGlAt:89 NAME 'olcSaslAuxprops' "
+ 			"SYNTAX OMsDirectoryString SINGLE-VALUE )", NULL, NULL },
++	{ "sasl-cbinding", NULL, 2, 2, 0,
++#ifdef HAVE_CYRUS_SASL
++		ARG_STRING, &sasl_cbinding,
++#else
++		ARG_IGNORED, NULL,
++#endif
++		"( OLcfgGlAt:100 NAME 'olcSaslCBinding' "
++			"EQUALITY caseIgnoreMatch "
++			"SYNTAX OMsDirectoryString SINGLE-VALUE )", NULL, NULL },
+ 	{ "sasl-host", "host", 2, 2, 0,
+ #ifdef HAVE_CYRUS_SASL
+ 		ARG_STRING|ARG_UNIQUE, &sasl_host,
+@@ -948,7 +957,7 @@ static ConfigOCs cf_ocs[] = {
+ 		 "olcPluginLogFile $ olcReadOnly $ olcReferral $ "
+ 		 "olcReplogFile $ olcRequires $ olcRestrict $ olcReverseLookup $ "
+ 		 "olcRootDSE $ "
+-		 "olcSaslAuxprops $ olcSaslHost $ olcSaslRealm $ olcSaslSecProps $ "
++		 "olcSaslAuxprops $ olcSaslCBinding $ olcSaslHost $ olcSaslRealm $ olcSaslSecProps $ "
+ 		 "olcSecurity $ olcServerID $ olcSizeLimit $ "
+ 		 "olcSockbufMaxIncoming $ olcSockbufMaxIncomingAuth $ "
+ 		 "olcTCPBuffer $ "
+diff --git a/servers/slapd/config.c b/servers/slapd/config.c
+index 060d3410f..3d713d4fb 100644
+--- a/servers/slapd/config.c
++++ b/servers/slapd/config.c
+@@ -73,6 +73,7 @@ char	*global_host = NULL;
+ struct berval global_host_bv = BER_BVNULL;
+ char	*global_realm = NULL;
+ char	*sasl_host = NULL;
++char	*sasl_cbinding = NULL;
+ char		**default_passwd_hash = NULL;
+ struct berval default_search_base = BER_BVNULL;
+ struct berval default_search_nbase = BER_BVNULL;
+diff --git a/servers/slapd/connection.c b/servers/slapd/connection.c
+index 5f11a0cf1..6d9bb8e85 100644
+--- a/servers/slapd/connection.c
++++ b/servers/slapd/connection.c
+@@ -1440,12 +1440,9 @@ connection_read( ber_socket_t s, conn_readinfo *cri )
+ 			    c->c_connid, (int) s, c->c_tls_ssf, c->c_ssf, 0 );
+ 			slap_sasl_external( c, c->c_tls_ssf, &authid );
+ 			if ( authid.bv_val ) free( authid.bv_val );
+-			{
+-				char cbinding[64];
+-				struct berval cbv = { sizeof(cbinding), cbinding };
+-				if ( ldap_pvt_tls_get_unique( ssl, &cbv, 1 ))
+-					slap_sasl_cbinding( c, &cbv );
+-			}
++
++			slap_sasl_cbinding( c, ssl );
++
+ 		} else if ( rc == 1 && ber_sockbuf_ctrl( c->c_sb,
+ 			LBER_SB_OPT_NEEDS_WRITE, NULL )) {	/* need to retry */
+ 			slapd_set_write( s, 1 );
+diff --git a/servers/slapd/proto-slap.h b/servers/slapd/proto-slap.h
+index b89fa836a..0790a8004 100644
+--- a/servers/slapd/proto-slap.h
++++ b/servers/slapd/proto-slap.h
+@@ -1681,8 +1681,7 @@ LDAP_SLAPD_F (int) slap_sasl_external( Connection *c,
+ 	slap_ssf_t ssf,	/* relative strength of external security */
+ 	struct berval *authid );	/* asserted authenication id */
+ 
+-LDAP_SLAPD_F (int) slap_sasl_cbinding( Connection *c,
+-	struct berval *cbv );
++LDAP_SLAPD_F (int) slap_sasl_cbinding( Connection *c, void *ssl );
+ 
+ LDAP_SLAPD_F (int) slap_sasl_reset( Connection *c );
+ LDAP_SLAPD_F (int) slap_sasl_close( Connection *c );
+@@ -2072,6 +2071,7 @@ LDAP_SLAPD_V (char *)	global_host;
+ LDAP_SLAPD_V (struct berval)	global_host_bv;
+ LDAP_SLAPD_V (char *)	global_realm;
+ LDAP_SLAPD_V (char *)	sasl_host;
++LDAP_SLAPD_V (char *)	sasl_cbinding;
+ LDAP_SLAPD_V (char *)	slap_sasl_auxprops;
+ LDAP_SLAPD_V (char **)	default_passwd_hash;
+ LDAP_SLAPD_V (int)		lber_debug;
+diff --git a/servers/slapd/sasl.c b/servers/slapd/sasl.c
+index fc023904a..5cced358c 100644
+--- a/servers/slapd/sasl.c
++++ b/servers/slapd/sasl.c
+@@ -1320,6 +1320,8 @@ int slap_sasl_destroy( void )
+ #endif
+ 	free( sasl_host );
+ 	sasl_host = NULL;
++	free( sasl_cbinding );
++	sasl_cbinding = NULL;
+ 
+ 	return 0;
+ }
+@@ -1506,17 +1508,24 @@ int slap_sasl_external(
+ 	return LDAP_SUCCESS;
+ }
+ 
+-int slap_sasl_cbinding( Connection *conn, struct berval *cbv )
++int slap_sasl_cbinding( Connection *conn, void *ssl )
+ {
+ #ifdef SASL_CHANNEL_BINDING
+-	sasl_channel_binding_t *cb = ch_malloc( sizeof(*cb) + cbv->bv_len );;
+-	cb->name = "ldap";
+-	cb->critical = 0;
+-	cb->data = (char *)(cb+1);
+-	cb->len = cbv->bv_len;
+-	memcpy( cb->data, cbv->bv_val, cbv->bv_len );
+-	sasl_setprop( conn->c_sasl_authctx, SASL_CHANNEL_BINDING, cb );
+-	conn->c_sasl_cbind = cb;
++	void *cb;
++	int i;
++
++	if ( sasl_cbinding == NULL )
++		return LDAP_SUCCESS;
++
++	i = ldap_pvt_sasl_cbinding_parse( sasl_cbinding );
++	if ( i < 0 )
++		return LDAP_SUCCESS;
++
++	cb = ldap_pvt_sasl_cbinding( ssl, i, 1 );
++	if ( cb != NULL ) {
++		sasl_setprop( conn->c_sasl_authctx, SASL_CHANNEL_BINDING, cb );
++		conn->c_sasl_cbind = cb;
++	}
+ #endif
+ 	return LDAP_SUCCESS;
+ }
+-- 
+2.26.2
+
