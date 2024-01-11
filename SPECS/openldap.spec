@@ -15,8 +15,8 @@
 %global __brp_remove_la_files %nil
 
 Name: openldap
-Version: 2.6.2
-Release: 3%{?dist}
+Version: 2.6.3
+Release: 1%{?dist}
 Summary: LDAP support libraries
 License: OpenLDAP
 URL: http://www.openldap.org/
@@ -541,6 +541,10 @@ exit 0
 %{_libdir}/libslapi-2.4*.so.*
 
 %changelog
+* Wed Jun 14 2023 Simon Pichugin <spichugi@redhat.com> - 2.6.3-1
+- Rebase OpenLDAP to 2.6.3
+  Related: rhbz#2212983
+
 * Fri Aug 5 2022 Simon Pichugin <spichugi@redhat.com> - 2.6.2-3
 - Add export symbols related to LDAP_CONNECTIONLESS
   Related: rhbz#2115465
