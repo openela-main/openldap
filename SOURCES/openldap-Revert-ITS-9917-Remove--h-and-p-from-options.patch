@@ -1,0 +1,139 @@
+From aa5c93049d48b7fd1ff98661a00e4e12d7d47324 Mon Sep 17 00:00:00 2001
+From: Simon Pichugin <spichugi@redhat.com>
+Date: Wed, 13 Dec 2023 11:03:20 -0800
+Subject: [PATCH] Revert "ITS#9917 Remove 'h' and 'p' from options[] in client
+ tools"
+
+This reverts commit a8f7fd00043e2c63b6216aeb3ba69b0d0485311b.
+---
+ clients/tools/ldapcompare.c | 2 +-
+ clients/tools/ldapdelete.c  | 2 +-
+ clients/tools/ldapexop.c    | 2 +-
+ clients/tools/ldapmodify.c  | 2 +-
+ clients/tools/ldapmodrdn.c  | 2 +-
+ clients/tools/ldappasswd.c  | 2 +-
+ clients/tools/ldapsearch.c  | 2 +-
+ clients/tools/ldapvc.c      | 2 +-
+ clients/tools/ldapwhoami.c  | 2 +-
+ 9 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/clients/tools/ldapcompare.c b/clients/tools/ldapcompare.c
+index 63c30408f..a83c8d4ac 100644
+--- a/clients/tools/ldapcompare.c
++++ b/clients/tools/ldapcompare.c
+@@ -104,7 +104,7 @@ static int docompare LDAP_P((
+ 
+ 
+ const char options[] = "z"
+-	"Cd:D:e:H:IMnNO:o:P:QR:U:vVw:WxX:y:Y:Z";
++	"Cd:D:e:h:H:IMnNO:o:p:P:QR:U:vVw:WxX:y:Y:Z";
+ 
+ #ifdef LDAP_CONTROL_DONTUSECOPY
+ int dontUseCopy = 0;
+diff --git a/clients/tools/ldapdelete.c b/clients/tools/ldapdelete.c
+index a66900d48..53f6e0278 100644
+--- a/clients/tools/ldapdelete.c
++++ b/clients/tools/ldapdelete.c
+@@ -82,7 +82,7 @@ usage( void )
+ 
+ 
+ const char options[] = "r"
+-	"cd:D:e:f:H:IMnNO:o:P:QR:U:vVw:WxX:y:Y:z:Z";
++	"cd:D:e:f:h:H:IMnNO:o:p:P:QR:U:vVw:WxX:y:Y:z:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapexop.c b/clients/tools/ldapexop.c
+index bfe6e4eac..bd6e02979 100644
+--- a/clients/tools/ldapexop.c
++++ b/clients/tools/ldapexop.c
+@@ -52,7 +52,7 @@ usage( void )
+ 
+ 
+ const char options[] = ""
+-	"d:D:e:H:InNO:o:QR:U:vVw:WxX:y:Y:Z";
++	"d:D:e:h:H:InNO:o:p:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapmodify.c b/clients/tools/ldapmodify.c
+index 33b723bda..c94c11a3a 100644
+--- a/clients/tools/ldapmodify.c
++++ b/clients/tools/ldapmodify.c
+@@ -125,7 +125,7 @@ usage( void )
+ 
+ 
+ const char options[] = "aE:rS:"
+-	"cd:D:e:f:H:IMnNO:o:P:QR:U:vVw:WxX:y:Y:Z";
++	"cd:D:e:f:h:H:IMnNO:o:p:P:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapmodrdn.c b/clients/tools/ldapmodrdn.c
+index 40a482f5d..d5cf43f7a 100644
+--- a/clients/tools/ldapmodrdn.c
++++ b/clients/tools/ldapmodrdn.c
+@@ -95,7 +95,7 @@ usage( void )
+ 
+ 
+ const char options[] = "rs:"
+-	"cd:D:e:f:H:IMnNO:o:P:QR:U:vVw:WxX:y:Y:Z";
++	"cd:D:e:f:h:H:IMnNO:o:p:P:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldappasswd.c b/clients/tools/ldappasswd.c
+index 9a48aabf3..1958a30f6 100644
+--- a/clients/tools/ldappasswd.c
++++ b/clients/tools/ldappasswd.c
+@@ -83,7 +83,7 @@ usage( void )
+ 
+ 
+ const char options[] = "Ea:As:St:T:"
+-	"d:D:e:H:InNO:o:QR:U:vVw:WxX:y:Y:Z";
++	"d:D:e:h:H:InNO:o:p:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapsearch.c b/clients/tools/ldapsearch.c
+index 69e172c6c..48793314b 100644
+--- a/clients/tools/ldapsearch.c
++++ b/clients/tools/ldapsearch.c
+@@ -363,7 +363,7 @@ parse_vlv(char *cvalue)
+ }
+ 
+ const char options[] = "a:Ab:cE:F:l:Ls:S:tT:uz:"
+-	"Cd:D:e:f:H:IMnNO:o:P:QR:U:vVw:WxX:y:Y:Z";
++	"Cd:D:e:f:h:H:IMnNO:o:p:P:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapvc.c b/clients/tools/ldapvc.c
+index 4f35025ec..846561847 100644
+--- a/clients/tools/ldapvc.c
++++ b/clients/tools/ldapvc.c
+@@ -86,7 +86,7 @@ usage( void )
+ 
+ 
+ const char options[] = "abE:"
+-	"d:D:e:H:InNO:o:QR:U:vVw:WxX:y:Y:Z";
++	"d:D:e:h:H:InNO:o:p:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+diff --git a/clients/tools/ldapwhoami.c b/clients/tools/ldapwhoami.c
+index e8ac4b34b..45d32f5d9 100644
+--- a/clients/tools/ldapwhoami.c
++++ b/clients/tools/ldapwhoami.c
+@@ -62,7 +62,7 @@ usage( void )
+ 
+ 
+ const char options[] = ""
+-	"d:D:e:H:InNO:o:QR:U:vVw:WxX:y:Y:Z";
++	"d:D:e:h:H:InNO:o:p:QR:U:vVw:WxX:y:Y:Z";
+ 
+ int
+ handle_private_option( int i )
+-- 
+2.43.0
+
