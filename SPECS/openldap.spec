@@ -5,7 +5,7 @@
 
 Name: openldap
 Version: 2.4.46
-Release: 19%{?dist}
+Release: 20%{?dist}
 Summary: LDAP support libraries
 License: OpenLDAP
 URL: http://www.openldap.org/
@@ -58,8 +58,9 @@ Patch61: openldap-cbinding-Convert-test077-to-LDIF-config.patch
 Patch62: openldap-cbinding-Update-keys-to-RSA-4096.patch
 Patch63: openldap-add-TLS_REQSAN-option.patch
 Patch64: openldap-change-TLS_REQSAN-default-to-TRY.patch
-Patch65: 0001-ITS-9904-ldap_url_parsehosts-check-for-strdup-failur.patch
-Patch66: 0001-ITS-9904-ldif_open_url-check-for-ber_strdup-failure.patch
+Patch65: openldap-cbinding-fix-openssl-digest.patch
+Patch66: 0001-ITS-9904-ldap_url_parsehosts-check-for-strdup-failur.patch
+Patch67: 0001-ITS-9904-ldif_open_url-check-for-ber_strdup-failure.patch
 
 # check-password module specific patches
 Patch90: check-password-makefile.patch
@@ -157,6 +158,7 @@ AUTOMAKE=%{_bindir}/true autoreconf -fi
 %patch64 -p1
 %patch65 -p1
 %patch66 -p1
+%patch67 -p1
 
 # build smbk5pwd with other overlays
 ln -s ../../../contrib/slapd-modules/smbk5pwd/smbk5pwd.c servers/slapd/overlays
@@ -526,6 +528,10 @@ exit 0
 %{_mandir}/man3/*
 
 %changelog
+* Wed Jul  3 2024 Simon Pichugin <spichugi@redhat.com> - 2.4.46-20
+- Bump version to 2.4.46-20
+- Resolves: RHEL-35538 - Fix OpenSSL channel binding digest
+
 * Tue Apr 30 2024 Simon Pichugin <spichugi@redhat.com> - 2.4.46-19
 - Bump version to 2.4.46-19
 - Resolves: RHEL-34283 - openldap: null pointer dereference in ber_memalloc_x function

@@ -1,0 +1,18 @@
+diff --git a/libraries/libldap/tls_o.c b/libraries/libldap/tls_o.c
+index 6f27168..eb7b97c 100644
+--- a/libraries/libldap/tls_o.c
++++ b/libraries/libldap/tls_o.c
+@@ -862,7 +862,12 @@ tlso_session_endpoint( tls_session *sess, struct berval *buf, int is_server )
+ 		return 0;
+ 
+ #if OPENSSL_VERSION_NUMBER >= 0x10100000
+-	md = EVP_get_digestbynid( X509_get_signature_nid( cert ));
++	{
++		int mdnid;
++		if ( !OBJ_find_sigid_algs( X509_get_signature_nid( cert ), &mdnid, NULL ))
++			return 0;
++		md = EVP_get_digestbynid( mdnid );
++	}
+ #else
+ 	md = EVP_get_digestbynid(OBJ_obj2nid( cert->sig_alg->algorithm ));
+ #endif
