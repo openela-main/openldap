@@ -5,7 +5,7 @@
 
 Name: openldap
 Version: 2.4.46
-Release: 20%{?dist}
+Release: 21%{?dist}
 Summary: LDAP support libraries
 License: OpenLDAP
 URL: http://www.openldap.org/
@@ -61,6 +61,8 @@ Patch64: openldap-change-TLS_REQSAN-default-to-TRY.patch
 Patch65: openldap-cbinding-fix-openssl-digest.patch
 Patch66: 0001-ITS-9904-ldap_url_parsehosts-check-for-strdup-failur.patch
 Patch67: 0001-ITS-9904-ldif_open_url-check-for-ber_strdup-failure.patch
+Patch68: openldap-plug-descriptor-leak-if-ldaps-connect-fails.patch
+Patch69: openldap-libldap-fix-double-sb_close-when-first-TLS.patch
 
 # check-password module specific patches
 Patch90: check-password-makefile.patch
@@ -159,6 +161,8 @@ AUTOMAKE=%{_bindir}/true autoreconf -fi
 %patch65 -p1
 %patch66 -p1
 %patch67 -p1
+%patch68 -p1
+%patch69 -p1
 
 # build smbk5pwd with other overlays
 ln -s ../../../contrib/slapd-modules/smbk5pwd/smbk5pwd.c servers/slapd/overlays
@@ -528,6 +532,10 @@ exit 0
 %{_mandir}/man3/*
 
 %changelog
+* Mon Jan 27 2025 Simon Pichugin <spichugi@redhat.com> - 2.4.46-21
+- Bump version to 2.4.46-21
+- Resolves: RHEL-75823 - Fix double file close when first TLS connection fails
+
 * Wed Jul  3 2024 Simon Pichugin <spichugi@redhat.com> - 2.4.46-20
 - Bump version to 2.4.46-20
 - Resolves: RHEL-35538 - Fix OpenSSL channel binding digest

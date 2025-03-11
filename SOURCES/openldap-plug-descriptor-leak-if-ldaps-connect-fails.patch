@@ -1,0 +1,24 @@
+From a64febc5c646952773e6195ab1ec54ef63deb73a Mon Sep 17 00:00:00 2001
+From: Howard Chu <hyc@openldap.org>
+Date: Sat, 11 Jan 2020 04:16:01 +0000
+Subject: [PATCH 001/336] ITS#9147 plug descriptor leak if ldaps connect fails
+
+---
+ libraries/libldap/open.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/libraries/libldap/open.c b/libraries/libldap/open.c
+index 4e0f9f8028..cde157b079 100644
+--- a/libraries/libldap/open.c
++++ b/libraries/libldap/open.c
+@@ -476,6 +476,7 @@ ldap_int_open_connection(
+ 				}
+ 				LDAP_MUTEX_UNLOCK( &lo->ldo_mutex );
+ 			}
++			ber_int_sb_close( conn->lconn_sb );
+ 			return -1;
+ 		}
+ 	}
+-- 
+2.47.1
+
