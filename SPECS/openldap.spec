@@ -15,8 +15,8 @@
 %global __brp_remove_la_files %nil
 
 Name: openldap
-Version: 2.6.6
-Release: 3%{?dist}
+Version: 2.6.8
+Release: 4%{?dist}
 Summary: LDAP support libraries
 License: OLDAP-2.8
 URL: http://www.openldap.org/
@@ -51,6 +51,8 @@ Patch7: openldap-openssl-manpage-defaultCA.patch
 Patch8: openldap-add-export-symbols-LDAP_CONNECTIONLESS.patch
 Patch9: openldap-Revert-ITS-8618-Remove-deprecated-h-and-p.patch
 Patch10: openldap-Revert-ITS-9917-Remove--h-and-p-from-options.patch
+Patch11: openldap-libldap-avoid-SSL-context-cleanup-during-library-des.patch
+Patch12: openldap-fix-TLS-connection-timeout-handling.patch
 
 # check-password module specific patches
 Patch90: check-password-makefile.patch
@@ -167,6 +169,8 @@ pushd openldap-%{version}
 %patch -P8 -p1
 %patch -P9 -p1
 %patch -P10 -p1
+%patch -P11 -p1
+%patch -P12 -p1
 
 # build smbk5pwd with other overlays
 ln -s ../../../contrib/slapd-modules/smbk5pwd/smbk5pwd.c servers/slapd/overlays
@@ -196,6 +200,8 @@ popd
 %set_build_flags
 # enable experimental support for LDAP over UDP (LDAP_CONNECTIONLESS)
 export CFLAGS="${CFLAGS} ${LDFLAGS} -Wl,--as-needed -Wl,-z,now -DLDAP_CONNECTIONLESS"
+# disable legacy hash algorithm
+export CFLAGS="${CFLAGS} -DOPENSSL_NO_MD2"
 
 pushd openldap-%{version}
 %configure \
@@ -482,6 +488,7 @@ exit 0
 %{_libdir}/openldap/home*
 %{_libdir}/openldap/lloadd*
 %{_libdir}/openldap/memberof*
+%{_libdir}/openldap/nestgroup*
 %{_libdir}/openldap/otp*
 %{_libdir}/openldap/pcache*
 %{_libdir}/openldap/ppolicy*
@@ -548,6 +555,23 @@ exit 0
 %{_libdir}/libslapi-2.4*.so.*
 
 %changelog
+* Wed Feb 12 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.8-4
+- Fix TLS connection timeout handling (RHEL-78297)
+
+* Wed Jan 08 2025 Viktor Ashirov <vashirov@redhat.com> - 2.6.8-3
+- Migrate gating tests from STI to FMF (RHEL-71053)
+
+* Tue Jan 7 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.8-2
+- Replace baseos-ci tests with osci (RHEL-71053)
+
+* Mon Dec 16 2024 Simon Pichugin <spichugi@redhat.com> - 2.6.8-1
+- Rebase to version 2.6.8 (RHEL-71053)
+- Avoid SSL context cleanup during library destruction (RHEL-56502)
+
+* Fri Oct 11 2024 Simon Pichugin <spichugi@redhat.com> - 2.6.6-4
+- Disable MD2 hash algorithm
+  Resolves: RHEL-59715
+
 * Fri Feb 9 2024 Simon Pichugin <spichugi@redhat.com> - 2.6.6-3
 - Use systemd-sysusers for ldap user and group
   Replace License with SPDX identifier
