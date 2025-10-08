@@ -1,0 +1,30 @@
+You have upgraded your openldap-servers package.
+Any major version upgrade can cause database corruption or loss.
+Please, make sure that you have up-to-date back up and read this document carefully.
+
+It's still recommended to do the backup even on the minor version upgrade.
+
+Please, review the next links before performing any action:
+
+Upgrading from 2.4.x - https://www.openldap.org/doc/admin25/appendix-upgrading.html
+Upgrading from 2.5.x - https://www.openldap.org/doc/admin26/appendix-upgrading.html
+The normal upgrade procedure - https://www.openldap.org/doc/admin26/maintenance.html
+
+Additionally, please, review and perform the following steps that can help you with the upgrade:
+
+         1. Back up both data and configuration directories into a safe place;
+         2. Export data to an LDIF file using slapcat;
+a. If you have the deprecated DB type and you haven't performed the slapcat command, you need to move your data and configuration to the system with OpenLDAP 2.4 version and run slapcat command there;
+         3. Change the server's configuration according to the changes in the above documents;
+          a. If you are replacing the BDB/HDB with MDB, make sure to replace the BDB/HDB sections with their MDB counterparts;
+4. Clear out the current data directory;
+         5. Import data to a new database from the LDIF file using slapadd;
+         6. Make sure that your data is intact.
+
+After you have completed the above operations, you can remove this file (/usr/share/openldap-servers/UPGRADE_INSTRUCTIONS) and start the server:
+
+        systemctl start slapd.service
+
+Be careful with this document's procedure, make sure you understand it, and test it in a non-production environment first. Always make sure that all backups are in place.
+
+You have been warned about the possibility of data corruption or loss.
