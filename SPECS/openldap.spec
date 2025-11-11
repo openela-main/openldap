@@ -16,8 +16,8 @@
 %global __brp_remove_la_files %nil
 
 Name: openldap
-Version: 2.6.8
-Release: 3%{?dist}
+Version: 2.6.9
+Release: 1%{?dist}
 Summary: LDAP support libraries
 License: OLDAP-2.8
 URL: http://www.openldap.org/
@@ -51,7 +51,6 @@ Patch6: openldap-switch-to-lt_dlopenadvise-to-get-RTLD_GLOBAL-set.patch
 Patch7: openldap-openssl-manpage-defaultCA.patch
 Patch8: openldap-add-export-symbols-LDAP_CONNECTIONLESS.patch
 Patch9: openldap-libldap-avoid-SSL-context-cleanup-during-library-des.patch
-Patch10: openldap-fix-TLS-connection-timeout-handling.patch
 
 # check-password module specific patches
 Patch90: check-password-makefile.patch
@@ -174,7 +173,6 @@ pushd openldap-%{version}
 %patch -P7 -p1
 %patch -P8 -p1
 %patch -P9 -p1
-%patch -P10 -p1
 
 # build smbk5pwd with other overlays
 ln -s ../../../contrib/slapd-modules/smbk5pwd/smbk5pwd.c servers/slapd/overlays
@@ -562,6 +560,9 @@ exit 0
 %endif
 
 %changelog
+* Wed Aug 6 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.9-1
+- Rebase to version 2.6.9 (RHEL-107610)
+
 * Wed Feb 12 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.8-3
 - Fix TLS connection timeout handling (RHEL-68773)
 
