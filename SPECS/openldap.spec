@@ -16,7 +16,7 @@
 %global __brp_remove_la_files %nil
 
 Name: openldap
-Version: 2.6.9
+Version: 2.6.10
 Release: 1%{?dist}
 Summary: LDAP support libraries
 License: OLDAP-2.8
@@ -560,6 +560,10 @@ exit 0
 %endif
 
 %changelog
+* Thu Dec 11 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.10-1
+- Rebase to version 2.6.10
+- Resolves: RHEL-129935
+
 * Wed Aug 6 2025 Simon Pichugin <spichugi@redhat.com> - 2.6.9-1
 - Rebase to version 2.6.9 (RHEL-107610)
 
